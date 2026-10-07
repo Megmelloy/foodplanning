@@ -3,10 +3,31 @@
 import { useState, type FormEvent } from "react";
 import { parseMealPlan, type MealPlan } from "@/lib/meal-plan";
 
+type ParticipantDraft = {
+  selections: string[];
+  notes: string;
+};
+
+const groupPreferenceOptions = [
+  "Vegetarian",
+  "Vegan",
+  "Pescatarian",
+  "Dairy-free",
+  "Gluten-free",
+  "No pork",
+  "No beef",
+  "Quick dinners",
+];
+
 export default function Home() {
   const [days, setDays] = useState(3);
   const [servings, setServings] = useState(2);
   const [preferences, setPreferences] = useState("");
+  const [planningWithFriends, setPlanningWithFriends] = useState(false);
+  const [participants, setParticipants] = useState<ParticipantDraft[]>([
+    { selections: [], notes: "" },
+    { selections: [], notes: "" },
+  ]);
   const [plan, setPlan] = useState<MealPlan | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,7 +41,17 @@ export default function Home() {
       const response = await fetch("/api/meal-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ days, servings, preferences }),
+        body: JSON.stringify({
+          days,
+          servings,
+          ...(planningWithFriends
+            ? {
+                participants: participants.map((participant) => ({
+                  preferences: [...participant.selections, participant.notes].filter(Boolean).join(", "),
+                })),
+              }
+            : { preferences }),
+        }),
       });
       const data: unknown = await response.json();
       if (!response.ok) {
@@ -51,7 +82,34 @@ export default function Home() {
 
       <div className="grid gap-8 md:grid-cols-[320px_1fr]">
         <form onSubmit={generatePlan} className="self-start rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-6 text-xl font-semibold">Your dinner plan</h2>
+          <h2 className="mb-6 text-xl font-semibold">{planningWithFriends ? "Plan with friends" : "Your dinner plan"}</h2>
+          <fieldset className="mb-6">
+            <legend className="mb-3 text-sm font-medium">Who are you planning for?</legend>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-stone-200 p-3 text-sm">
+                <input
+                  type="radio"
+                  name="planning-mode"
+                  checked={!planningWithFriends}
+                  onChange={() => setPlanningWithFriends(false)}
+                  disabled={loading}
+                  className="accent-emerald-800"
+                />
+                Just me
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-stone-200 p-3 text-sm">
+                <input
+                  type="radio"
+                  name="planning-mode"
+                  checked={planningWithFriends}
+                  onChange={() => setPlanningWithFriends(true)}
+                  disabled={loading}
+                  className="accent-emerald-800"
+                />
+                With friends
+              </label>
+            </div>
+          </fieldset>
           <div className="grid grid-cols-2 gap-4">
             <label className="text-sm font-medium">
               Days
@@ -66,11 +124,97 @@ export default function Home() {
               </select>
             </label>
           </div>
-          <label className="mt-5 block text-sm font-medium" htmlFor="preferences">Preferences & ingredients</label>
-          <textarea id="preferences" value={preferences} onChange={(event) => setPreferences(event.target.value)} disabled={loading} maxLength={500} rows={5} className="field resize-y" placeholder="Vegetarian, quick dinners, use up spinach..." />
-          <p className="mt-2 text-xs text-stone-500">Optional. Don&apos;t include personal or medical information.</p>
+          {planningWithFriends ? (
+            <fieldset className="mt-5 space-y-4">
+              <legend className="text-sm font-medium">Everyone&apos;s preferences</legend>
+              <p className="text-xs text-stone-500">Add 2–8 people. Pick what fits or add your own notes; preferences are labeled by person number, not name.</p>
+              {participants.map((participant, index) => (
+                <div key={index} className="rounded-2xl border border-stone-200 p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium">
+                      Person {index + 1}
+                    </p>
+                    {participants.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setParticipants((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                        disabled={loading}
+                        className="text-xs font-medium text-stone-600 underline hover:text-stone-900"
+                        aria-label={`Remove person ${index + 1}`}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <label className="text-xs font-medium text-stone-700" htmlFor={`participant-${index}-notes`}>
+                    Other preferences or ingredients
+                  </label>
+                  <textarea
+                    id={`participant-${index}-notes`}
+                    value={participant.notes}
+                    onChange={(event) => setParticipants((current) =>
+                      current.map((item, itemIndex) => itemIndex === index
+                        ? { ...item, notes: event.target.value }
+                        : item)
+                    )}
+                    disabled={loading}
+                    maxLength={300}
+                    rows={2}
+                    className="field resize-y"
+                    placeholder="Other preferences, like no mushrooms..."
+                  />
+                  <fieldset className="mt-3">
+                    <legend className="text-xs font-medium text-stone-700">Quick picks</legend>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {groupPreferenceOptions.map((option) => (
+                        <label
+                          key={option}
+                          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-stone-200 px-2.5 py-1.5 text-xs hover:bg-emerald-50"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={participant.selections.includes(option)}
+                            onChange={(event) => setParticipants((current) =>
+                              current.map((item, itemIndex) => {
+                                if (itemIndex !== index) return item;
+                                const selections = event.target.checked
+                                  ? [...item.selections, option]
+                                  : item.selections.filter((selection) => selection !== option);
+                                return { ...item, selections };
+                              })
+                            )}
+                            disabled={loading}
+                            className="accent-emerald-800"
+                          />
+                          {option}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <p className="mt-2 text-right text-xs text-stone-500">{participant.notes.length}/300 notes</p>
+                </div>
+              ))}
+              {participants.length < 8 && (
+                <button
+                  type="button"
+                  onClick={() => setParticipants((current) => [...current, { selections: [], notes: "" }])}
+                  disabled={loading}
+                  className="w-full rounded-xl border border-stone-300 px-4 py-3 text-sm font-semibold text-emerald-900 hover:bg-emerald-50 disabled:opacity-60"
+                >
+                  Add a person
+                </button>
+              )}
+              <p className="text-xs text-stone-500">Selections and notes are optional. Don&apos;t include names or personal or medical information. Check all ingredients yourself; AI can&apos;t guarantee allergen safety.</p>
+            </fieldset>
+          ) : (
+            <>
+              <label className="mt-5 block text-sm font-medium" htmlFor="preferences">Preferences & ingredients</label>
+              <textarea id="preferences" value={preferences} onChange={(event) => setPreferences(event.target.value)} disabled={loading} maxLength={500} rows={5} className="field resize-y" placeholder="Vegetarian, quick dinners, use up spinach..." />
+              <p className="mt-2 text-xs text-stone-500">Optional. Don&apos;t include personal or medical information.</p>
+            </>
+          )}
           <button disabled={loading} type="submit" className="mt-6 w-full rounded-xl bg-emerald-800 px-4 py-3 font-semibold text-white hover:bg-emerald-900 disabled:cursor-wait disabled:opacity-60">
-            {loading ? "Planning your dinners..." : "Create my plan"}
+            {loading ? "Planning your dinners..." : planningWithFriends ? "Plan dinners for us" : "Create my plan"}
           </button>
           <p role="status" className="sr-only">{loading ? "Generating your meal plan. Please wait." : ""}</p>
           {error && <p role="alert" className="mt-4 text-sm text-red-800">{error}</p>}

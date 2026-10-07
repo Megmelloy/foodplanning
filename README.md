@@ -23,9 +23,11 @@ npm.cmd run dev
 ```
 
 Open http://localhost:3000. Choose 1-7 dinners, 1-8 servings, and optional
-preferences. Plans include dinner ingredients, instructions, and a combined
-grocery list. Without configuration, the UI shows a clear setup error rather
-than making up a plan. Restart the server after environment changes.
+preferences. For group planning, one organizer can enter preferences for 2-8
+people; their profiles are labeled by person number and are not shared by link.
+Plans include dinner ingredients, instructions, and a combined grocery list.
+Without configuration, the UI shows a clear setup error rather than making up
+a plan. Restart the server after environment changes.
 
 ## Checks
 
@@ -56,9 +58,10 @@ Track upstream fixes and rerun `npm.cmd audit` when updating dependencies.
 ## AI privacy and deployment
 
 Submitting the form with AI enabled sends preferences and serving counts to
-OpenAI. Do not enter sensitive personal or medical information. Responses are
-requested with `store: false`; this is not a guarantee of zero provider
-retention. Review the provider's data policies before use.
+OpenAI. Group preferences are labeled by person number; names are not requested.
+Do not enter sensitive personal or medical information. Responses are requested
+with `store: false`; this is not a guarantee of zero provider retention. Review
+the provider's data policies before use.
 
 AI output is not authoritative: verify allergens, ingredient amounts, and safe
 cooking instructions. This application is not medical or nutritional advice.
