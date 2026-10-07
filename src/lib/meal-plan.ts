@@ -25,9 +25,25 @@ export function parsePlanningInput(value: unknown): PlanningInput | null {
   if (
     !isRecord(value) ||
     typeof value.days !== "number" || !Number.isInteger(value.days) || value.days < 1 || value.days > 7 ||
-    typeof value.servings !== "number" || !Number.isInteger(value.servings) || value.servings < 1 || value.servings > 8 ||
-    typeof value.preferences !== "string" || value.preferences.length > 500
+    typeof value.servings !== "number" || !Number.isInteger(value.servings) || value.servings < 1 || value.servings > 8
   ) return null;
+
+  if ("participants" in value) {
+    if (!Array.isArray(value.participants) || value.participants.length < 2 || value.participants.length > 8) return null;
+    const participantPreferences: string[] = [];
+    for (const participant of value.participants) {
+      if (!isRecord(participant) || typeof participant.preferences !== "string" ||
+        participant.preferences.length > 400) return null;
+      participantPreferences.push(participant.preferences.trim() || "No additional preferences");
+    }
+    const preferences = participantPreferences
+      .map((preference, index) => `Person ${index + 1}: ${preference}`)
+      .join("\n");
+    if (preferences.length > 3200) return null;
+    return { days: value.days, servings: value.servings, preferences };
+  }
+
+  if (typeof value.preferences !== "string" || value.preferences.length > 500) return null;
   return { days: value.days, servings: value.servings, preferences: value.preferences.trim() };
 }
 
