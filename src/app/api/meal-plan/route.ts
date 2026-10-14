@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     return failure("Send a valid JSON request.", 400);
   }
   const input = parsePlanningInput(body);
-  if (!input) return failure("Choose 1-7 days, 1-8 servings, and preferences under 501 characters.", 400);
+  if (!input) return failure("Choose 1-7 days, 1-8 servings, and valid preferences or 2-8 group profiles.", 400);
   if (process.env.ENABLE_AI_PLANNING !== "true") {
     return failure("AI planning is not enabled. Follow the README setup instructions to enable it locally.", 503);
   }

@@ -20,6 +20,35 @@ test("rejects invalid input rather than silently defaulting", () => {
   }
 });
 
+test("accepts group profiles and combines them without sending names", () => {
+  assert.deepEqual(
+    parsePlanningInput({
+      days: 3,
+      servings: 4,
+      participants: [{ preferences: " vegetarian " }, { preferences: "" }],
+    }),
+    {
+      days: 3,
+      servings: 4,
+      preferences: "Person 1: vegetarian\nPerson 2: No additional preferences",
+    },
+  );
+});
+
+test("rejects invalid group profile counts, values, and oversized combined preferences", () => {
+  const valid = { days: 3, servings: 2 };
+  for (const participants of [
+    [],
+    [{ preferences: "one" }],
+    Array(9).fill({ preferences: "okay" }),
+    [{ preferences: null }, { preferences: "okay" }],
+    [{ preferences: "a".repeat(401) }, { preferences: "okay" }],
+    Array(8).fill({ preferences: "a".repeat(400) }),
+  ]) {
+    assert.equal(parsePlanningInput({ ...valid, participants }), null);
+  }
+});
+
 function validPlan(days = 1) {
   return {
     meals: Array.from({ length: days }, (_, index) => ({

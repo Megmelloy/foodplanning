@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Foodplanning | A little less dinner stress",
-  description: "Plan your dinners and grocery list with an AI-powered food planner.",
+  title: "Foodplanning | Find somewhere to eat together",
+  description: "Gather friends' dining preferences, find common ground, and explore places to eat together.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
