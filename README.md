@@ -115,5 +115,5 @@ but does not yet implement accounts, saved plans, or a database.
 
 ## GitHub
 
-Intended remote: https://github.com/Megmelloy/foodplanning.git.
+This repository: [Megmelloy/foodplanning](https://github.com/Megmelloy/foodplanning).
 Keep this project separate from other repositories; do not replace their remotes.
