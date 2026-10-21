@@ -1,7 +1,7 @@
 # foodplanning
 
-A social-dining planner for figuring out where to eat with friends, built with
-Next.js App Router, React, TypeScript, Tailwind CSS, and ESLint.
+**Table Sync** is a social-dining planner for figuring out where to eat with
+friends, built with Next.js App Router, React, TypeScript, Tailwind CSS, and ESLint.
 
 ## Local setup
 
@@ -16,9 +16,16 @@ Open http://localhost:3000. No API key is needed for social dining.
 
 ## Planning an outing
 
-One organizer enters a public area and preferences for 2-15 people:
-cuisine favorites, cuisines to skip, a comfortable price range, dietary needs,
-and optional notes such as outdoor seating.
+Table Sync's Small Group flow has three steps, shown in a progress bar:
+
+1. **Where**: enter a public city, neighborhood, or ZIP code.
+2. **Tastes**: pass the device around. For 2-15 people, mark each cuisine
+   Love, Open, or Skip, and choose a comfortable price range, dietary needs,
+   and optional notes such as outdoor seating.
+3. **Vote**: review the shortlist, vote, and lock in the group's pick.
+
+A live group snapshot shows the area, group size, price range, dietary needs,
+and notes to confirm with the restaurant.
 
 The app excludes any cuisine skipped by anyone, ranks the remaining cuisines
 by number of favorites, and offers up to three Google Maps search links.
@@ -40,18 +47,7 @@ device and identify a cuisine search, not a verified restaurant.
 
 This version does not fetch actual restaurant listings or support voting
 across devices, accounts, invite links, or saved profiles. Opening a Maps link shows
-Google's current search results for the selected cuisine and area.
-
-## Planned feature spaces
-
-The page's **Coming next** section reserves UI spaces for requirements 2-10.
-Requirements 8 and 9 now describe the one-device voting and finalization flow
-above; the other cards remain non-interactive plans for taste profiles,
-dietary restrictions and allergies, participant locations, live restaurant
-retrieval, restaurant recommendations and explanations, and result sharing.
-
-Cards distinguish existing behavior from work still needed. Placeholders do not
-collect data or claim verified restaurant or allergy information. Live venue
+Google's current search results for the selected cuisine and area. Live venue
 features need a restaurant data provider, and independent group participation
 needs shared storage and participant identification.
 
@@ -76,8 +72,7 @@ Track upstream fixes and rerun `npm.cmd audit` when updating dependencies.
 
 ## Project structure
 
-- `src/app/page.tsx`: social-dining form, group summary, and Maps search links.
-- `src/app/components/planned-features.tsx`: labeled feature spaces for requirements 2-10.
+- `src/app/page.tsx`: Table Sync's three-step planner, group snapshot, shortlist, and voting.
 - `src/lib/social-dining.ts`: dining types, validation, ranking, search links, and vote tallying.
 - `src/app/api/meal-plan/route.ts`: legacy server-only AI cooking endpoint.
 - `src/lib/meal-plan.ts`: legacy cooking types, validation, and output schema.
