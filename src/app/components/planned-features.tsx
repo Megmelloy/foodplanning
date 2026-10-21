@@ -44,16 +44,18 @@ const plannedFeatures = [
   {
     number: 8,
     title: "Group voting",
+    status: "Partial",
     description: "Let participants vote on the recommended restaurants.",
     preview: "Reserved for participant voting controls and vote totals.",
-    current: "Not implemented. Independent voting across devices requires shared group storage and participant identification.",
+    current: "Today: one shared device can record one changeable vote per person on shortlisted cuisines. Voting across devices requires shared storage and participant identification.",
   },
   {
     number: 9,
     title: "Final decision selection",
+    status: "Partial",
     description: "Choose a final restaurant by majority vote, host selection, or an AI-selected recommendation.",
     preview: "Reserved for a decision-method selector and final-choice confirmation.",
-    current: "Not implemented. Voting rules, ties, host permissions, and any AI integration still need to be defined.",
+    current: "Today: the highest-voted cuisine can be finalized, and the organizer breaks ties. Specific restaurants, host-only overrides, and AI selection are not implemented.",
   },
   {
     number: 10,
@@ -70,15 +72,15 @@ export default function PlannedFeatures() {
       <p className="text-sm font-bold uppercase tracking-[0.2em] text-emerald-800">Coming next</p>
       <h2 id="planned-features-heading" className="mt-3 text-3xl font-semibold tracking-tight">Space for the full group-dining journey.</h2>
       <p className="mt-4 max-w-3xl text-stone-600">
-        Requirements 2–10 are outlined below for team discussion. These are planned UI spaces, not working features.
-        The current organizer-led preference form and Maps searches above are still available.
+        Requirements 2–10 are outlined below for team discussion. Requirements 8 and 9 are partially available
+        through one-device voting above; the other cards are planned UI spaces, not working features.
       </p>
       <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {plannedFeatures.map((feature) => (
           <article key={feature.number} aria-labelledby={`requirement-${feature.number}`} className="flex flex-col rounded-3xl border border-stone-200 bg-white p-6">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-semibold uppercase tracking-widest text-stone-500">Requirement {feature.number}</p>
-              <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-600">Planned</span>
+              <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-600">{"status" in feature ? feature.status : "Planned"}</span>
             </div>
             <h3 id={`requirement-${feature.number}`} className="mt-4 text-lg font-semibold">{feature.title}</h3>
             <p className="mt-2 text-sm text-stone-600">{feature.description}</p>

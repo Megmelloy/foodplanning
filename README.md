@@ -16,7 +16,7 @@ Open http://localhost:3000. No API key is needed for social dining.
 
 ## Planning an outing
 
-One organizer enters a public area and preferences for 2-8 people:
+One organizer enters a public area and preferences for 2-15 people:
 cuisine favorites, cuisines to skip, a comfortable price range, dietary needs,
 and optional notes such as outdoor seating.
 
@@ -32,24 +32,28 @@ results are not verified for budget, dietary suitability, availability,
 distance, or group seating. Confirm prices, hours, seating, and dietary needs
 directly with the restaurant.
 
-This version does not fetch actual restaurant listings or include voting on
-venues, accounts, invite links, or saved profiles. Opening a Maps link shows
+After the shortlist appears, the group can pass one device around to vote.
+Each person can cast or change one optional vote for a shortlisted cuisine.
+The highest-voted cuisine can be finalized; if options tie, the organizer must
+choose among the tied options. Votes and the final choice stay on the current
+device and identify a cuisine search, not a verified restaurant.
+
+This version does not fetch actual restaurant listings or support voting
+across devices, accounts, invite links, or saved profiles. Opening a Maps link shows
 Google's current search results for the selected cuisine and area.
 
 ## Planned feature spaces
 
-The page's **Coming next** section reserves visible, non-interactive UI spaces
-for requirements 2-10: taste profiles through swiping or ratings; dietary
-restrictions and allergies; participant locations or a meeting area; live
-open-now restaurant retrieval within a configurable distance; restaurant
-recommendations and explanations; group voting; final decision methods; and
-sharing the chosen restaurant's details and directions.
+The page's **Coming next** section reserves UI spaces for requirements 2-10.
+Requirements 8 and 9 now describe the one-device voting and finalization flow
+above; the other cards remain non-interactive plans for taste profiles,
+dietary restrictions and allergies, participant locations, live restaurant
+retrieval, restaurant recommendations and explanations, and result sharing.
 
-Each card is labeled **Planned** and distinguishes existing behavior from work
-still needed. No placeholder collects data, casts votes, selects a restaurant,
-or claims verified restaurant or allergy information. Live venue features need
-a restaurant data provider, and independent group participation needs shared
-storage and participant identification.
+Cards distinguish existing behavior from work still needed. Placeholders do not
+collect data or claim verified restaurant or allergy information. Live venue
+features need a restaurant data provider, and independent group participation
+needs shared storage and participant identification.
 
 ## Checks
 
@@ -74,7 +78,7 @@ Track upstream fixes and rerun `npm.cmd audit` when updating dependencies.
 
 - `src/app/page.tsx`: social-dining form, group summary, and Maps search links.
 - `src/app/components/planned-features.tsx`: labeled feature spaces for requirements 2-10.
-- `src/lib/social-dining.ts`: dining types, validation, ranking, and search links.
+- `src/lib/social-dining.ts`: dining types, validation, ranking, search links, and vote tallying.
 - `src/app/api/meal-plan/route.ts`: legacy server-only AI cooking endpoint.
 - `src/lib/meal-plan.ts`: legacy cooking types, validation, and output schema.
 - `tests/`: social-dining and legacy meal-plan validation tests.

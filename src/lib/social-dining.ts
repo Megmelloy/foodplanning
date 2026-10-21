@@ -1,6 +1,8 @@
 export const cuisines = ["Italian", "Mexican", "Japanese", "Indian", "Thai", "Mediterranean", "Chinese", "American"] as const;
 export const dietaryNeeds = ["Vegetarian", "Vegan", "Pescatarian", "Dairy-free", "Gluten-free", "No pork", "No beef"] as const;
 export const budgets = ["$", "$$", "$$$"] as const;
+export const minParticipants = 2;
+export const maxParticipants = 15;
 
 export type Cuisine = typeof cuisines[number];
 export type DietaryNeed = typeof dietaryNeeds[number];
@@ -24,6 +26,12 @@ export type DiningPlan = {
   notes: { person: number; text: string }[];
   options: { cuisine: Cuisine; votes: number; mapsUrl: string }[];
 };
+export type GroupVote = Cuisine | null;
+export type VoteSummary = {
+  totals: { cuisine: Cuisine; votes: number }[];
+  votesCast: number;
+  leaders: Cuisine[];
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -38,7 +46,7 @@ function isChoiceList<T extends string>(value: unknown, choices: readonly T[]): 
 export function parseDiningInput(value: unknown): DiningInput | null {
   if (!isRecord(value) || typeof value.area !== "string" ||
     !value.area.trim() || value.area.length > 120 ||
-    !Array.isArray(value.participants) || value.participants.length < 2 || value.participants.length > 8) return null;
+    !Array.isArray(value.participants) || value.participants.length < minParticipants || value.participants.length > maxParticipants) return null;
 
   const participants: DiningParticipant[] = [];
   for (const person of value.participants) {
@@ -88,5 +96,24 @@ export function createDiningPlan(input: DiningInput): DiningPlan {
     dietaryNeeds: dietaryNeeds.filter((need) => input.participants.some((person) => person.dietaryNeeds.includes(need))),
     notes: input.participants.flatMap((person, index) => person.notes ? [{ person: index + 1, text: person.notes }] : []),
     options,
+  };
+}
+
+export function tallyVotes(options: readonly Cuisine[], votes: readonly GroupVote[]): VoteSummary {
+  if (new Set(options).size !== options.length) throw new Error("Shortlist options must be unique.");
+  if (votes.some((vote) => vote !== null && !options.includes(vote))) {
+    throw new Error("Votes must be for a shortlisted option.");
+  }
+
+  const totals = options.map((cuisine) => ({
+    cuisine,
+    votes: votes.filter((vote) => vote === cuisine).length,
+  }));
+  const votesCast = votes.filter((vote) => vote !== null).length;
+  const highest = Math.max(0, ...totals.map((total) => total.votes));
+  return {
+    totals,
+    votesCast,
+    leaders: highest ? totals.filter((total) => total.votes === highest).map((total) => total.cuisine) : [],
   };
 }

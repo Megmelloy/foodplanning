@@ -3,8 +3,8 @@
 import { useState, type FormEvent } from "react";
 import PlannedFeatures from "@/app/components/planned-features";
 import {
-  budgets, cuisines, dietaryNeeds, createDiningPlan, parseDiningInput,
-  type DiningParticipant, type DiningPlan,
+  budgets, cuisines, dietaryNeeds, createDiningPlan, maxParticipants, minParticipants, parseDiningInput, tallyVotes,
+  type Cuisine, type DiningParticipant, type DiningPlan, type GroupVote,
 } from "@/lib/social-dining";
 
 type PersonDraft = DiningParticipant & { id: number };
@@ -19,23 +19,45 @@ export default function Home() {
   const [nextId, setNextId] = useState(3);
   const [plan, setPlan] = useState<DiningPlan | null>(null);
   const [error, setError] = useState("");
+  const [votes, setVotes] = useState<GroupVote[]>([]);
+  const [tieChoice, setTieChoice] = useState<Cuisine | null>(null);
+  const [finalChoice, setFinalChoice] = useState<Cuisine | null>(null);
+  const voteSummary = plan ? tallyVotes(plan.options.map((option) => option.cuisine), votes) : null;
+  const leaders = voteSummary?.leaders ?? [];
+  const decision = leaders.length === 1 ? leaders[0] : tieChoice && leaders.includes(tieChoice) ? tieChoice : null;
+  const finalOption = plan?.options.find((option) => option.cuisine === finalChoice);
+
+  function clearPlan() {
+    setPlan(null);
+    setVotes([]);
+    setTieChoice(null);
+    setFinalChoice(null);
+    setError("");
+  }
 
   function updatePerson(id: number, changes: Partial<DiningParticipant>) {
     setPeople((current) => current.map((person) => person.id === id ? { ...person, ...changes } : person));
-    setPlan(null);
-    setError("");
+    clearPlan();
   }
 
   function findPlaces(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const input = parseDiningInput({ area, participants: people });
     if (!input) {
-      setError("Enter an area and valid preferences for 2-8 people.");
-      setPlan(null);
+      clearPlan();
+      setError(`Enter an area and valid preferences for ${minParticipants}-${maxParticipants} people.`);
       return;
     }
-    setError("");
-    setPlan(createDiningPlan(input));
+    const nextPlan = createDiningPlan(input);
+    clearPlan();
+    setPlan(nextPlan);
+    setVotes(Array.from({ length: nextPlan.groupSize }, () => null));
+  }
+
+  function updateVote(person: number, vote: GroupVote) {
+    setVotes((current) => current.map((item, index) => index === person ? vote : item));
+    setTieChoice(null);
+    setFinalChoice(null);
   }
 
   return (
@@ -55,7 +77,7 @@ export default function Home() {
           <input
             id="area" value={area} required maxLength={120} className="field"
             placeholder="City or neighborhood, e.g. Capitol Hill, Seattle"
-            onChange={(event) => { setArea(event.target.value); setPlan(null); setError(""); }}
+            onChange={(event) => { setArea(event.target.value); clearPlan(); }}
           />
           <p className="mt-2 text-xs text-stone-500">Use a public area, not a home address.</p>
 
@@ -69,7 +91,7 @@ export default function Home() {
                     aria-label={`Remove person ${index + 1}`}
                     onClick={() => {
                       setPeople((current) => current.filter((item) => item.id !== person.id));
-                      setPlan(null); setError("");
+                      clearPlan();
                     }}
                   >Remove person</button>
                 )}
@@ -141,12 +163,12 @@ export default function Home() {
               </fieldset>
             ))}
           </div>
-          {people.length < 8 && (
+          {people.length < maxParticipants && (
             <button type="button" className="mt-4 w-full rounded-xl border border-stone-300 px-4 py-3 text-sm font-semibold text-emerald-900 hover:bg-emerald-50"
               onClick={() => {
                 setPeople((current) => [...current, newPerson(nextId)]);
                 setNextId((current) => current + 1);
-                setPlan(null); setError("");
+                clearPlan();
               }}>Add a person</button>
           )}
           <button type="submit" className="mt-6 w-full rounded-xl bg-emerald-800 px-4 py-3 font-semibold text-white hover:bg-emerald-900">Find our dining options</button>
@@ -196,6 +218,76 @@ export default function Home() {
                   </a>
                 </article>
               ))}
+              {plan.options.length > 0 && voteSummary && (
+                <section aria-labelledby="group-vote-heading" className="rounded-3xl border border-emerald-200 bg-white p-6">
+                  <h3 id="group-vote-heading" className="text-xl font-semibold">Vote on the shortlist</h3>
+                  <p className="mt-2 text-sm text-stone-600">
+                    Pass this device around. Each person gets one vote and can change it until the group finalizes.
+                    Totals show the shortlisted cuisine, not a verified restaurant.
+                  </p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {votes.map((vote, index) => (
+                      <div key={index}>
+                        <label htmlFor={`vote-${index}`} className="block text-sm font-medium">Person {index + 1}&apos;s vote</label>
+                        <select id={`vote-${index}`} value={vote ?? ""} className="field"
+                          onChange={(event) => {
+                            const choice = plan.options.find((option) => option.cuisine === event.target.value)?.cuisine ?? null;
+                            updateVote(index, choice);
+                          }}>
+                          <option value="">No vote yet</option>
+                          {plan.options.map((option) => <option key={option.cuisine} value={option.cuisine}>{option.cuisine}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  <ul className="mt-5 space-y-2 text-sm" aria-label="Vote totals">
+                    {voteSummary.totals.map((total) => (
+                      <li key={total.cuisine} className="flex justify-between rounded-xl bg-stone-50 px-3 py-2">
+                        <span>{total.cuisine}</span>
+                        <span>{total.votes} {total.votes === 1 ? "vote" : "votes"}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-3 text-sm text-stone-600">{voteSummary.votesCast} of {plan.groupSize} people have voted.</p>
+                  {leaders.length > 1 && (
+                    <fieldset className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                      <legend className="px-1 text-sm font-semibold">Organizer tie-break</legend>
+                      <p className="text-sm text-stone-700">These options are tied. Choose one to finalize.</p>
+                      <div className="mt-2 flex flex-wrap gap-3">
+                        {leaders.map((leader) => (
+                          <label key={leader} className="flex items-center gap-2 text-sm">
+                            <input type="radio" name="tie-choice" className="accent-emerald-800"
+                              checked={tieChoice === leader}
+                              onChange={() => { setTieChoice(leader); setFinalChoice(null); }}
+                            />{leader}
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  )}
+                  <button type="button" disabled={!decision}
+                    className="mt-5 w-full rounded-xl bg-emerald-800 px-4 py-3 font-semibold text-white hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-600"
+                    onClick={() => setFinalChoice(decision)}>
+                    Finalize group choice
+                  </button>
+                  {!decision && (
+                    <p className="mt-2 text-xs text-stone-500">
+                      {voteSummary.votesCast === 0 ? "Cast at least one vote to finalize." : "Choose a tie-break option to finalize."}
+                    </p>
+                  )}
+                </section>
+              )}
+              {finalOption && (
+                <div role="status" className="rounded-3xl bg-emerald-900 p-6 text-white">
+                  <p className="text-sm font-semibold uppercase tracking-widest text-emerald-100">Final group choice</p>
+                  <h3 className="mt-2 text-2xl font-semibold">{finalOption.cuisine} restaurants</h3>
+                  <p className="mt-2 text-sm text-emerald-50">Pick a specific place together and confirm dietary needs, prices, hours, and seating directly with the restaurant.</p>
+                  <a href={finalOption.mapsUrl} target="_blank" rel="noopener noreferrer"
+                    className="mt-4 inline-block rounded-xl bg-white px-4 py-3 text-sm font-semibold text-emerald-900">
+                    Open {finalOption.cuisine} search on Maps
+                  </a>
+                </div>
+              )}
               <p className="text-xs text-stone-500">Maps links send only the area, cuisine, and price-range search wording to Google when opened. Individual dietary needs and notes are not included. Search results may not match your budget or requirements.</p>
             </>
           )}

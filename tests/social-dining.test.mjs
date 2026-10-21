@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cuisines, createDiningPlan, parseDiningInput } from "../src/lib/social-dining.ts";
+import { cuisines, createDiningPlan, maxParticipants, parseDiningInput, tallyVotes } from "../src/lib/social-dining.ts";
 
 function person(changes = {}) {
   return { liked: [], avoided: [], dietaryNeeds: [], budget: "$$", notes: "", ...changes };
 }
 
-test("accepts 2-8 profiles, trims input, and preserves independent lists", () => {
-  for (const count of [2, 8]) {
+test("accepts 2-15 profiles, trims input, and preserves independent lists", () => {
+  for (const count of [2, maxParticipants]) {
     const input = parseDiningInput({ area: " Seattle ", participants: Array.from({ length: count }, () => person({ notes: " quiet " })) });
     assert.equal(input.area, "Seattle");
     assert.equal(input.participants.length, count);
@@ -19,7 +19,7 @@ test("rejects malformed input and conflicting preferences", () => {
   const valid = { area: "Seattle", participants: [person(), person()] };
   for (const value of [
     null, [], {}, { ...valid, area: " " }, { ...valid, area: "a".repeat(121) },
-    { ...valid, participants: [person()] }, { ...valid, participants: Array(9).fill(person()) },
+    { ...valid, participants: [person()] }, { ...valid, participants: Array(maxParticipants + 1).fill(person()) },
     ...[
       null, person({ budget: "free" }), person({ liked: ["Unknown"] }),
       person({ liked: ["Italian", "Italian"] }), person({ avoided: null }),
@@ -64,4 +64,22 @@ test("handles no favorites deterministically and never falls back to a skipped c
   assert.deepEqual(open.options.map((option) => option.cuisine), cuisines.slice(0, 3));
   const excluded = createDiningPlan({ area: "Seattle", participants: [person({ avoided: [...cuisines] }), person()] });
   assert.deepEqual(excluded.options, []);
+});
+
+test("tallies one optional vote per person and reports a single leader", () => {
+  const summary = tallyVotes(["Italian", "Thai", "Japanese"], ["Thai", null, "Thai", "Italian"]);
+  assert.deepEqual(summary.totals, [
+    { cuisine: "Italian", votes: 1 },
+    { cuisine: "Thai", votes: 2 },
+    { cuisine: "Japanese", votes: 0 },
+  ]);
+  assert.equal(summary.votesCast, 3);
+  assert.deepEqual(summary.leaders, ["Thai"]);
+});
+
+test("reports ties, no votes, and rejects votes outside the shortlist", () => {
+  assert.deepEqual(tallyVotes(["Italian", "Thai"], ["Italian", "Thai"]).leaders, ["Italian", "Thai"]);
+  assert.deepEqual(tallyVotes(["Italian", "Thai"], [null, null]).leaders, []);
+  assert.throws(() => tallyVotes(["Italian"], ["Thai"]), /shortlisted option/);
+  assert.throws(() => tallyVotes(["Italian", "Italian"], []), /unique/);
 });
