@@ -18,14 +18,20 @@ Open http://localhost:3000. No API key is needed for social dining.
 
 Table Sync's Small Group flow has three steps, shown in a progress bar:
 
-1. **Where**: enter a public city, neighborhood, or ZIP code.
-2. **Tastes**: pass the device around. For 2-15 people, mark each cuisine
-   Love, Open, or Skip, and choose a comfortable price range, dietary needs,
-   and optional notes such as outdoor seating.
-3. **Vote**: review the shortlist, vote, and lock in the group's pick.
+1. **Where & when**: the organizer enters a public city, neighborhood, or ZIP
+   code and one dinner date and time. The time must be in the future and
+   within the next 365 days.
+2. **Tastes**: pass the device around. Person 1 is the organizer and is the
+   only one who can invite or remove guests, up to 15 people total (14
+   invites). Each person marks each cuisine Love, Open, or Skip, and chooses a
+   comfortable price range, dietary needs, and optional notes such as outdoor
+   seating.
+3. **Vote**: review the shortlist, vote, and lock in the group's pick. The
+   final pick shows the date and time and can be downloaded as a calendar
+   event (`.ics`, two hours long, in the device's local time).
 
-A live group snapshot shows the area, group size, price range, dietary needs,
-and notes to confirm with the restaurant.
+A live group snapshot shows the area, dinner time, group size, remaining
+invites, price range, dietary needs, and notes to confirm with the restaurant.
 
 The app excludes any cuisine skipped by anyone, ranks the remaining cuisines
 by number of favorites, and offers up to three Google Maps search links.
@@ -45,8 +51,10 @@ The highest-voted cuisine can be finalized; if options tie, the organizer must
 choose among the tied options. Votes and the final choice stay on the current
 device and identify a cuisine search, not a verified restaurant.
 
-This version does not fetch actual restaurant listings or support voting
-across devices, accounts, invite links, or saved profiles. Opening a Maps link shows
+This version does not fetch actual restaurant listings, check opening hours
+for the chosen time, send invitations, or support voting across devices,
+accounts, invite links, or saved profiles. Invited guests are added on the
+same device. Opening a Maps link shows
 Google's current search results for the selected cuisine and area. Live venue
 features need a restaurant data provider, and independent group participation
 needs shared storage and participant identification.
@@ -73,7 +81,7 @@ Track upstream fixes and rerun `npm.cmd audit` when updating dependencies.
 ## Project structure
 
 - `src/app/page.tsx`: Table Sync's three-step planner, group snapshot, shortlist, and voting.
-- `src/lib/social-dining.ts`: dining types, validation, ranking, search links, and vote tallying.
+- `src/lib/social-dining.ts`: dining types, validation, scheduling, invite limits, ranking, search links, calendar export, and vote tallying.
 - `src/app/api/meal-plan/route.ts`: legacy server-only AI cooking endpoint.
 - `src/lib/meal-plan.ts`: legacy cooking types, validation, and output schema.
 - `tests/`: social-dining and legacy meal-plan validation tests.

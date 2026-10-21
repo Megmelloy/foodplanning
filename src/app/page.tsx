@@ -2,7 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 import {
-  budgets, cuisines, dietaryNeeds, createDiningPlan, maxParticipants, minParticipants, parseDiningInput, tallyVotes,
+  budgets, createCalendarEvent, createDiningPlan, cuisines, dietaryNeeds, formatSchedule, invitesRemaining, maxDaysAhead,
+  maxInvites, maxParticipants, minParticipants, parseDiningInput, parseSchedule, tallyVotes,
   type Budget, type Cuisine, type DiningParticipant, type DiningPlan, type GroupVote,
 } from "@/lib/social-dining";
 
@@ -16,7 +17,7 @@ const cuisineIcons: Record<Cuisine, string> = {
 };
 const budgetLabels: Record<Budget, string> = { "$": "Budget-friendly", "$$": "Mid-range", "$$$": "Splurge" };
 const steps: { number: Step; label: string; hint: string }[] = [
-  { number: 1, label: "Where", hint: "Pick an area" },
+  { number: 1, label: "Where & when", hint: "Area and time" },
   { number: 2, label: "Tastes", hint: "Loves and skips" },
   { number: 3, label: "Vote", hint: "Decide together" },
 ];
@@ -55,6 +56,10 @@ function StepHeading({ number, id, title, description }: { number: Step; id: str
 
 export default function Home() {
   const [area, setArea] = useState("");
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("19:00");
+  const [detailsReady, setDetailsReady] = useState(false);
+  const [errorField, setErrorField] = useState<"area" | "schedule" | null>(null);
   const [people, setPeople] = useState<PersonDraft[]>([newPerson(1), newPerson(2)]);
   const [nextId, setNextId] = useState(3);
   const [activeId, setActiveId] = useState(1);
@@ -75,15 +80,27 @@ export default function Home() {
   const groupNeeds = dietaryNeeds.filter((need) => people.some((person) => person.dietaryNeeds.includes(need)));
   const groupNotes = people.flatMap((person, index) => person.notes.trim() ? [{ person: index + 1, text: person.notes.trim() }] : []);
   const readyCount = people.filter(hasInput).length;
+  const organizer = people[0];
+  const guests = people.slice(1);
+  const organizerActive = activePerson?.id === organizer.id;
+  const invitesLeft = invitesRemaining(people.length);
+  const when = date && time ? formatSchedule({ date, time }) : null;
 
   function showStep(next: Step) {
     setStep(next);
     setError("");
+    setErrorField(null);
     document.getElementById("planner")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function canVisit(target: Step) {
-    return target === 1 || (target === 2 && area.trim() !== "") || (target === 3 && plan !== null);
+    return target === 1 || (target === 2 && detailsReady) || (target === 3 && plan !== null);
+  }
+
+  function editDetails(update: () => void) {
+    update();
+    setDetailsReady(false);
+    clearPlan();
   }
 
   function clearPlan() {
@@ -92,6 +109,7 @@ export default function Home() {
     setTieChoice(null);
     setFinalChoice(null);
     setError("");
+    setErrorField(null);
   }
 
   function updatePerson(id: number, changes: Partial<DiningParticipant>) {
@@ -108,30 +126,43 @@ export default function Home() {
     });
   }
 
-  function addPerson() {
-    if (people.length >= maxParticipants) return;
+  function inviteGuest() {
+    if (!organizerActive || invitesLeft === 0) return;
     setPeople((current) => [...current, newPerson(nextId)]);
-    setActiveId(nextId);
     setNextId((current) => current + 1);
     clearPlan();
   }
 
-  function removePerson(id: number) {
-    if (people.length <= minParticipants) return;
-    const index = people.findIndex((person) => person.id === id);
-    const remaining = people.filter((person) => person.id !== id);
-    setPeople(remaining);
-    setActiveId(remaining[Math.min(index, remaining.length - 1)].id);
+  function removeGuest(id: number) {
+    if (!organizerActive || id === organizer.id || people.length <= minParticipants) return;
+    setPeople((current) => current.filter((person) => person.id !== id));
     clearPlan();
   }
 
-  function continueFromArea(event: FormEvent<HTMLFormElement>) {
+  function continueFromDetails(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!area.trim()) {
       setError("Enter a city, neighborhood, or ZIP code to continue.");
+      setErrorField("area");
       return;
     }
+    if (!parseSchedule({ date, time })) {
+      setError(`Pick a date and time that hasn't passed yet, within the next ${maxDaysAhead} days.`);
+      setErrorField("schedule");
+      return;
+    }
+    setDetailsReady(true);
     showStep(2);
+  }
+
+  function downloadCalendar() {
+    if (!plan || !finalOption) return;
+    const file = new Blob([createCalendarEvent(plan, finalOption.cuisine)], { type: "text/calendar;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(file);
+    link.download = `table-sync-${plan.schedule.date}.ics`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 0);
   }
 
   function buildShortlist() {
@@ -139,9 +170,11 @@ export default function Home() {
       showStep(3);
       return;
     }
-    const input = parseDiningInput({ area, participants: people });
+    const input = parseDiningInput({ area, schedule: { date, time }, participants: people });
     if (!input) {
-      setError(`Add an area and valid tastes for ${minParticipants}-${maxParticipants} people.`);
+      setError(parseSchedule({ date, time })
+        ? `Add valid tastes for ${minParticipants}-${maxParticipants} people.`
+        : "Your dinner time has passed. Go back to step 1 and pick a new one.");
       return;
     }
     const nextPlan = createDiningPlan(input);
@@ -226,8 +259,8 @@ export default function Home() {
         <div className="mt-8 grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div>
             {step === 1 && (
-              <form onSubmit={continueFromArea} noValidate className={card} aria-labelledby="where-heading">
-                <StepHeading number={1} id="where-heading" title="Where is everyone eating?" description="Enter a city, neighborhood, or ZIP code. Keep it public, not a home address." />
+              <form onSubmit={continueFromDetails} noValidate className={card} aria-labelledby="where-heading">
+                <StepHeading number={1} id="where-heading" title="Where and when?" description="The organizer sets the area and one dinner time. Use a public area, not a home address." />
                 <label htmlFor="area" className="text-sm font-semibold">Area</label>
                 <div className="relative mt-2">
                   <svg aria-hidden viewBox="0 0 24 24" className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-ink/40" fill="none" stroke="currentColor" strokeWidth="2">
@@ -236,19 +269,41 @@ export default function Home() {
                   <input
                     id="area" value={area} maxLength={120} autoComplete="address-level2"
                     placeholder="Capitol Hill, Seattle or 98102"
-                    aria-invalid={error ? true : undefined} aria-describedby={error ? "area-help area-error" : "area-help"}
+                    aria-invalid={errorField === "area" ? true : undefined} aria-describedby={errorField === "area" ? "area-help details-error" : "area-help"}
                     className="w-full rounded-2xl border border-ink/15 bg-cream/60 py-4 pl-12 pr-4 text-lg transition placeholder:text-ink/35 focus:border-herb focus:bg-white"
-                    onChange={(event) => { setArea(event.target.value); clearPlan(); }}
+                    onChange={(event) => editDetails(() => setArea(event.target.value))}
                   />
                 </div>
                 <p id="area-help" className="mt-2 text-sm text-ink/55">Used only to build restaurant searches on Google Maps.</p>
-                {error && <p id="area-error" role="alert" className="mt-3 text-sm font-medium text-tomato">{error}</p>}
+
+                <fieldset className="mt-6" aria-describedby={errorField === "schedule" ? "when-help details-error" : "when-help"}>
+                  <legend className="text-sm font-semibold">Dinner date and time</legend>
+                  <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                    {[
+                      { id: "dinner-date", label: "Date", type: "date", value: date, set: setDate },
+                      { id: "dinner-time", label: "Time", type: "time", value: time, set: setTime },
+                    ].map((field) => (
+                      <div key={field.id}>
+                        <label htmlFor={field.id} className="sr-only">{field.label}</label>
+                        <input
+                          id={field.id} type={field.type} value={field.value} required
+                          step={field.type === "time" ? 900 : undefined}
+                          aria-invalid={errorField === "schedule" ? true : undefined}
+                          className="w-full rounded-2xl border border-ink/15 bg-cream/60 px-4 py-4 text-lg transition focus:border-herb focus:bg-white"
+                          onChange={(event) => editDetails(() => field.set(event.target.value))}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p id="when-help" className="mt-2 text-sm text-ink/55">One set time for the whole group, up to a year out. Check that places are open then.</p>
+                </fieldset>
+                {error && <p id="details-error" role="alert" className="mt-3 text-sm font-medium text-tomato">{error}</p>}
 
                 <ul className="mt-8 grid gap-3 sm:grid-cols-3">
                   {[
-                    ["💛", "Share tastes", "Everyone marks cuisines they love or want to skip."],
+                    ["💛", "Share tastes", "The organizer invites the group; everyone marks loves and skips."],
                     ["✨", "Get a shortlist", "Any skip is removed; favorites rise to the top."],
-                    ["🗳️", "Vote and go", "One vote each, then lock in the group's pick."],
+                    ["🗓️", "Vote and save", "Lock in the pick and add it to everyone's calendar."],
                   ].map(([icon, title, text]) => (
                     <li key={title} className="rounded-2xl bg-cream/70 p-4">
                       <span aria-hidden className="text-2xl">{icon}</span>
@@ -276,26 +331,52 @@ export default function Home() {
                       >
                         <span aria-hidden className={`h-2 w-2 rounded-full ${hasInput(person) ? "bg-herb" : active ? "bg-white/40" : "bg-ink/20"}`} />
                         Person {index + 1}
+                        {index === 0 && <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${active ? "bg-saffron text-ink" : "bg-saffron/30"}`}>Organizer</span>}
                         <span className="sr-only">{hasInput(person) ? ", tastes added" : ", no tastes yet"}</span>
                       </button>
                     );
                   })}
-                  <button
-                    type="button" onClick={addPerson} disabled={people.length >= maxParticipants}
-                    className="rounded-full border border-dashed border-ink/30 px-4 py-2 text-sm font-semibold text-ink/70 transition hover:border-herb hover:text-herb disabled:cursor-not-allowed disabled:opacity-40"
-                  >+ Add person</button>
                   <span className="ml-auto text-xs font-medium text-ink/50">{people.length}/{maxParticipants} people</span>
                 </div>
 
+                {organizerActive ? (
+                  <section aria-labelledby="invite-heading" className="mt-4 rounded-[1.5rem] border border-herb/25 bg-herb/5 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 id="invite-heading" className="text-sm font-semibold">Organizer: guest list</h3>
+                        <p className="text-xs text-ink/60" aria-live="polite">
+                          {invitesLeft ? `${invitesLeft} of ${maxInvites} invites left for a small party.` : `Small party is full at ${maxParticipants} people.`}
+                        </p>
+                      </div>
+                      <button
+                        type="button" onClick={inviteGuest} disabled={invitesLeft === 0}
+                        className="rounded-full bg-herb px-4 py-2 text-sm font-semibold text-white transition hover:bg-herb/90 disabled:cursor-not-allowed disabled:bg-ink/25"
+                      >+ Invite a guest</button>
+                    </div>
+                    <ul className="mt-3 flex flex-wrap gap-2">
+                      {guests.map((guest, index) => (
+                        <li key={guest.id} className="flex items-center gap-1 rounded-full border border-ink/10 bg-white py-1 pl-3 pr-1 text-sm">
+                          Person {index + 2}
+                          <button
+                            type="button" onClick={() => removeGuest(guest.id)} disabled={people.length <= minParticipants}
+                            aria-label={`Remove Person ${index + 2}`}
+                            className="grid h-6 w-6 place-items-center rounded-full text-ink/50 transition hover:bg-tomato/10 hover:text-tomato disabled:cursor-not-allowed disabled:opacity-30"
+                          ><span aria-hidden>×</span></button>
+                        </li>
+                      ))}
+                    </ul>
+                    {people.length <= minParticipants && <p className="mt-2 text-xs text-ink/55">You need at least one guest.</p>}
+                  </section>
+                ) : (
+                  <p className="mt-4 rounded-2xl bg-ink/5 px-4 py-3 text-xs text-ink/60">
+                    <span aria-hidden>🔒</span> Only the organizer (Person 1) can invite or remove people.
+                  </p>
+                )}
+
                 <div className="mt-6 rounded-[1.5rem] bg-cream/70 p-4 sm:p-6">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="font-display text-2xl font-semibold">Person {activeIndex + 1}</h3>
-                    {people.length > minParticipants && (
-                      <button type="button" onClick={() => removePerson(activePerson.id)} className="text-sm font-semibold text-tomato underline-offset-4 hover:underline">
-                        Remove Person {activeIndex + 1}
-                      </button>
-                    )}
-                  </div>
+                  <h3 className="font-display text-2xl font-semibold">
+                    Person {activeIndex + 1}{organizerActive && <span className="ml-2 align-middle text-sm font-sans font-semibold text-ink/50">Organizer</span>}
+                  </h3>
 
                   <h4 className="mt-5 text-sm font-semibold">Cuisines</h4>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -395,7 +476,7 @@ export default function Home() {
                 <section className={card} aria-labelledby="shortlist-heading">
                   <StepHeading
                     number={3} id="shortlist-heading" title="Your shortlist"
-                    description={`Ranked by favorites for ${plan.groupSize} people in ${plan.area}. Anything someone skipped is already gone.`}
+                    description={`${formatSchedule(plan.schedule)} in ${plan.area}. Ranked by favorites for ${plan.groupSize} people; anything someone skipped is already gone.`}
                   />
                   {plan.options.length === 0 ? (
                     <div role="status" className="rounded-[1.5rem] bg-cream/70 p-8 text-center">
@@ -522,14 +603,22 @@ export default function Home() {
                         <span aria-hidden className="text-6xl">{cuisineIcons[finalOption.cuisine]}</span>
                         <h2 className="font-display text-4xl font-semibold tracking-tight sm:text-5xl">{finalOption.cuisine} it is!</h2>
                       </div>
-                      <p className="mt-4 max-w-xl text-white/85">
-                        Pick a specific spot together and call ahead to confirm
-                        {plan.dietaryNeeds.length ? ` ${plan.dietaryNeeds.join(", ")} options, ` : " "}
-                        prices, hours, and seating.
+                      <p className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 font-semibold">
+                        <span aria-hidden>🗓️</span> {formatSchedule(plan.schedule)} · {plan.area}
                       </p>
-                      <a href={finalOption.mapsUrl} target="_blank" rel="noopener noreferrer" className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-white px-5 py-3.5 font-semibold text-herb transition hover:-translate-y-0.5">
-                        Find {finalOption.cuisine} places on Maps <span aria-hidden>↗</span><span className="sr-only"> (opens in a new tab)</span>
-                      </a>
+                      <p className="mt-4 max-w-xl text-white/85">
+                        Pick a specific spot together and call ahead to confirm they&apos;re open then, plus
+                        {plan.dietaryNeeds.length ? ` ${plan.dietaryNeeds.join(", ")} options, ` : " "}
+                        prices, and seating for {plan.groupSize}.
+                      </p>
+                      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                        <button type="button" onClick={downloadCalendar} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-saffron px-5 py-3.5 font-semibold text-ink transition hover:-translate-y-0.5">
+                          <span aria-hidden>＋</span> Add to calendar (.ics)
+                        </button>
+                        <a href={finalOption.mapsUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3.5 font-semibold text-herb transition hover:-translate-y-0.5">
+                          Find {finalOption.cuisine} places on Maps <span aria-hidden>↗</span><span className="sr-only"> (opens in a new tab)</span>
+                        </a>
+                      </div>
                     </div>
                   </section>
                 )}
@@ -545,7 +634,9 @@ export default function Home() {
               <dl className="mt-4 space-y-3 text-sm">
                 {[
                   ["Area", area.trim() || "Not set yet"],
+                  ["When", when ?? "Not set yet"],
                   ["People", `${people.length} · ${readyCount} with tastes`],
+                  ["Guests", `${guests.length} invited · ${invitesLeft} spots left`],
                   ["Price", `${groupBudget} · ${budgetLabels[groupBudget].toLowerCase()}`],
                 ].map(([label, value]) => (
                   <div key={label} className="flex justify-between gap-4">
