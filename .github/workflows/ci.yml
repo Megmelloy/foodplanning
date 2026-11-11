@@ -36,7 +36,7 @@ jobs:
         run: npm run lint
 
       - name: Run TypeScript Typecheck
-        run: npm run typecheck
+        run: npx next typegen && npm run typecheck
 
       - name: Run Unit & Validation Tests
         run: npm test
