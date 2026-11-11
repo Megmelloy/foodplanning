@@ -1,6 +1,11 @@
 export const cuisines = ["Italian", "Mexican", "Japanese", "Indian", "Thai", "Mediterranean", "Chinese", "American"] as const;
 export const dietaryNeeds = ["Vegetarian", "Vegan", "Pescatarian", "Dairy-free", "Gluten-free", "No pork", "No beef"] as const;
 export const budgets = ["$", "$$", "$$$"] as const;
+export const minParticipants = 2;
+export const maxParticipants = 15;
+export const maxInvites = maxParticipants - 1;
+export const maxDaysAhead = 365;
+export const mealLengthHours = 2;
 
 export type Cuisine = typeof cuisines[number];
 export type DietaryNeed = typeof dietaryNeeds[number];
@@ -12,17 +17,29 @@ export type DiningParticipant = {
   budget: Budget;
   notes: string;
 };
+export type DiningSchedule = {
+  date: string;
+  time: string;
+};
 export type DiningInput = {
   area: string;
+  schedule: DiningSchedule;
   participants: DiningParticipant[];
 };
 export type DiningPlan = {
   area: string;
+  schedule: DiningSchedule;
   groupSize: number;
   budget: Budget;
   dietaryNeeds: DietaryNeed[];
   notes: { person: number; text: string }[];
   options: { cuisine: Cuisine; votes: number; mapsUrl: string }[];
+};
+export type GroupVote = Cuisine | null;
+export type VoteSummary = {
+  totals: { cuisine: Cuisine; votes: number }[];
+  votesCast: number;
+  leaders: Cuisine[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -35,10 +52,78 @@ function isChoiceList<T extends string>(value: unknown, choices: readonly T[]): 
     new Set(value).size === value.length;
 }
 
-export function parseDiningInput(value: unknown): DiningInput | null {
+function scheduleStart(schedule: DiningSchedule) {
+  const [year, month, day] = schedule.date.split("-").map(Number);
+  const [hour, minute] = schedule.time.split(":").map(Number);
+  return new Date(year, month - 1, day, hour, minute);
+}
+
+export function parseSchedule(value: unknown, now = new Date()): DiningSchedule | null {
+  if (!isRecord(value) || typeof value.date !== "string" || typeof value.time !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value.date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value.time)) return null;
+
+  const schedule = { date: value.date, time: value.time };
+  const start = scheduleStart(schedule);
+  const [year, month, day] = value.date.split("-").map(Number);
+  // Rejects rollover dates such as 2026-02-30.
+  if (start.getFullYear() !== year || start.getMonth() !== month - 1 || start.getDate() !== day) return null;
+  const latest = new Date(now);
+  latest.setDate(latest.getDate() + maxDaysAhead);
+  return start > now && start <= latest ? schedule : null;
+}
+
+export function formatSchedule(schedule: DiningSchedule) {
+  const start = scheduleStart(schedule);
+  const day = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" }).format(start);
+  const hour = start.getHours() % 12 || 12;
+  const minute = String(start.getMinutes()).padStart(2, "0");
+  return `${day} · ${hour}:${minute} ${start.getHours() < 12 ? "AM" : "PM"}`;
+}
+
+export function invitesRemaining(groupSize: number) {
+  return Math.max(0, Math.min(maxInvites, maxParticipants - groupSize));
+}
+
+function calendarStamp(date: Date, utc = false) {
+  const parts = utc
+    ? [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()]
+    : [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds()];
+  const [year, ...rest] = parts.map((part) => String(part).padStart(2, "0"));
+  return `${year}${rest.slice(0, 2).join("")}T${rest.slice(2).join("")}${utc ? "Z" : ""}`;
+}
+
+function calendarText(text: string) {
+  return text.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+}
+
+export function createCalendarEvent(plan: DiningPlan, cuisine: Cuisine, now = new Date()) {
+  const start = scheduleStart(plan.schedule);
+  const end = new Date(start);
+  end.setHours(end.getHours() + mealLengthHours);
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Table Sync//Group dinner//EN",
+    "BEGIN:VEVENT",
+    `UID:${calendarStamp(start)}-${cuisine.toLowerCase()}@table-sync`,
+    `DTSTAMP:${calendarStamp(now, true)}`,
+    `DTSTART:${calendarStamp(start)}`,
+    `DTEND:${calendarStamp(end)}`,
+    `SUMMARY:${calendarText(`Group dinner: ${cuisine}`)}`,
+    `LOCATION:${calendarText(plan.area)}`,
+    `DESCRIPTION:${calendarText(`${plan.groupSize} people. Confirm the restaurant is open and check prices and dietary needs before you go.`)}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "",
+  ].join("\r\n");
+}
+
+export function parseDiningInput(value: unknown, now = new Date()): DiningInput | null {
   if (!isRecord(value) || typeof value.area !== "string" ||
     !value.area.trim() || value.area.length > 120 ||
-    !Array.isArray(value.participants) || value.participants.length < 2 || value.participants.length > 8) return null;
+    !Array.isArray(value.participants) || value.participants.length < minParticipants || value.participants.length > maxParticipants) return null;
+  const schedule = parseSchedule(value.schedule, now);
+  if (!schedule) return null;
 
   const participants: DiningParticipant[] = [];
   for (const person of value.participants) {
@@ -58,7 +143,7 @@ export function parseDiningInput(value: unknown): DiningInput | null {
       notes: person.notes.trim(),
     });
   }
-  return { area: value.area.trim(), participants };
+  return { area: value.area.trim(), schedule, participants };
 }
 
 export function createDiningPlan(input: DiningInput): DiningPlan {
@@ -83,10 +168,30 @@ export function createDiningPlan(input: DiningInput): DiningPlan {
 
   return {
     area: input.area,
+    schedule: { ...input.schedule },
     groupSize: input.participants.length,
     budget,
     dietaryNeeds: dietaryNeeds.filter((need) => input.participants.some((person) => person.dietaryNeeds.includes(need))),
     notes: input.participants.flatMap((person, index) => person.notes ? [{ person: index + 1, text: person.notes }] : []),
     options,
+  };
+}
+
+export function tallyVotes(options: readonly Cuisine[], votes: readonly GroupVote[]): VoteSummary {
+  if (new Set(options).size !== options.length) throw new Error("Shortlist options must be unique.");
+  if (votes.some((vote) => vote !== null && !options.includes(vote))) {
+    throw new Error("Votes must be for a shortlisted option.");
+  }
+
+  const totals = options.map((cuisine) => ({
+    cuisine,
+    votes: votes.filter((vote) => vote === cuisine).length,
+  }));
+  const votesCast = votes.filter((vote) => vote !== null).length;
+  const highest = Math.max(0, ...totals.map((total) => total.votes));
+  return {
+    totals,
+    votesCast,
+    leaders: highest ? totals.filter((total) => total.votes === highest).map((total) => total.cuisine) : [],
   };
 }

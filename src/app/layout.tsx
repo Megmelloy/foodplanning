@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Foodplanning | Find somewhere to eat together",
-  description: "Gather friends' dining preferences, find common ground, and explore places to eat together.",
+  title: "Table Sync | Dinner, decided together",
+  description: "Gather your group's cravings and dealbreakers, get a shortlist, and vote on where to eat.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
