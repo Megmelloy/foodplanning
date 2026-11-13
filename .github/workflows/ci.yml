@@ -2,16 +2,30 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "feature/**"
+      - "fix/**"
+      - "ci/**"
+      - "docs/**"
   pull_request:
-    branches: [main]
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
+  checks: write
+  statuses: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate-and-build:
-    name: Lint, Typecheck, Test & Build
+    name: Format, Lint, Typecheck, Test & Build
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -22,6 +36,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js 24 LTS
         uses: actions/setup-node@v4
@@ -32,13 +50,28 @@ jobs:
       - name: Install dependencies cleanly
         run: npm ci
 
+      - name: Auto-format branch code to standard clean format
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          npx --yes prettier --write "src/**/*.{ts,tsx,js,jsx,json,css}" "tests/**/*.{js,mjs,ts}" "*.{json,md,mjs,ts}"
+          if [[ -n $(git status --porcelain) ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "style: format code to standard clean format [skip ci]"
+            git push
+          fi
+
+      - name: Verify standard code formatting
+        run: npx --yes prettier --check "src/**/*.{ts,tsx,js,jsx,json,css}" "tests/**/*.{js,mjs,ts}" "*.{json,md,mjs,ts}"
+
       - name: Run ESLint
         run: npm run lint
 
       - name: Run TypeScript Typecheck
         run: npx next typegen && npm run typecheck
 
-      - name: Run Unit & Validation Tests
+      - name: Run Unit and Validation Tests
         run: npm test
 
       - name: Build Production Next.js Bundle
