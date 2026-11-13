@@ -1,5 +1,22 @@
-export const cuisines = ["Italian", "Mexican", "Japanese", "Indian", "Thai", "Mediterranean", "Chinese", "American"] as const;
-export const dietaryNeeds = ["Vegetarian", "Vegan", "Pescatarian", "Dairy-free", "Gluten-free", "No pork", "No beef"] as const;
+export const cuisines = [
+  "Italian",
+  "Mexican",
+  "Japanese",
+  "Indian",
+  "Thai",
+  "Mediterranean",
+  "Chinese",
+  "American",
+] as const;
+export const dietaryNeeds = [
+  "Vegetarian",
+  "Vegan",
+  "Pescatarian",
+  "Dairy-free",
+  "Gluten-free",
+  "No pork",
+  "No beef",
+] as const;
 export const budgets = ["$", "$$", "$$$"] as const;
 export const minParticipants = 2;
 export const maxParticipants = 15;
@@ -7,9 +24,9 @@ export const maxInvites = maxParticipants - 1;
 export const maxDaysAhead = 365;
 export const mealLengthHours = 2;
 
-export type Cuisine = typeof cuisines[number];
-export type DietaryNeed = typeof dietaryNeeds[number];
-export type Budget = typeof budgets[number];
+export type Cuisine = (typeof cuisines)[number];
+export type DietaryNeed = (typeof dietaryNeeds)[number];
+export type Budget = (typeof budgets)[number];
 export type DiningParticipant = {
   liked: Cuisine[];
   avoided: Cuisine[];
@@ -46,10 +63,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isChoiceList<T extends string>(value: unknown, choices: readonly T[]): value is T[] {
-  return Array.isArray(value) && value.length <= choices.length &&
-    value.every((item) => typeof item === "string" && choices.some((choice) => choice === item)) &&
-    new Set(value).size === value.length;
+function isChoiceList<T extends string>(
+  value: unknown,
+  choices: readonly T[],
+): value is T[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= choices.length &&
+    value.every(
+      (item) =>
+        typeof item === "string" && choices.some((choice) => choice === item),
+    ) &&
+    new Set(value).size === value.length
+  );
 }
 
 function scheduleStart(schedule: DiningSchedule) {
@@ -58,15 +84,29 @@ function scheduleStart(schedule: DiningSchedule) {
   return new Date(year, month - 1, day, hour, minute);
 }
 
-export function parseSchedule(value: unknown, now = new Date()): DiningSchedule | null {
-  if (!isRecord(value) || typeof value.date !== "string" || typeof value.time !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(value.date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value.time)) return null;
+export function parseSchedule(
+  value: unknown,
+  now = new Date(),
+): DiningSchedule | null {
+  if (
+    !isRecord(value) ||
+    typeof value.date !== "string" ||
+    typeof value.time !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value.date) ||
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(value.time)
+  )
+    return null;
 
   const schedule = { date: value.date, time: value.time };
   const start = scheduleStart(schedule);
   const [year, month, day] = value.date.split("-").map(Number);
   // Rejects rollover dates such as 2026-02-30.
-  if (start.getFullYear() !== year || start.getMonth() !== month - 1 || start.getDate() !== day) return null;
+  if (
+    start.getFullYear() !== year ||
+    start.getMonth() !== month - 1 ||
+    start.getDate() !== day
+  )
+    return null;
   const latest = new Date(now);
   latest.setDate(latest.getDate() + maxDaysAhead);
   return start > now && start <= latest ? schedule : null;
@@ -74,7 +114,11 @@ export function parseSchedule(value: unknown, now = new Date()): DiningSchedule 
 
 export function formatSchedule(schedule: DiningSchedule) {
   const start = scheduleStart(schedule);
-  const day = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" }).format(start);
+  const day = new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(start);
   const hour = start.getHours() % 12 || 12;
   const minute = String(start.getMinutes()).padStart(2, "0");
   return `${day} · ${hour}:${minute} ${start.getHours() < 12 ? "AM" : "PM"}`;
@@ -86,17 +130,39 @@ export function invitesRemaining(groupSize: number) {
 
 function calendarStamp(date: Date, utc = false) {
   const parts = utc
-    ? [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds()]
-    : [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds()];
+    ? [
+        date.getUTCFullYear(),
+        date.getUTCMonth() + 1,
+        date.getUTCDate(),
+        date.getUTCHours(),
+        date.getUTCMinutes(),
+        date.getUTCSeconds(),
+      ]
+    : [
+        date.getFullYear(),
+        date.getMonth() + 1,
+        date.getDate(),
+        date.getHours(),
+        date.getMinutes(),
+        date.getSeconds(),
+      ];
   const [year, ...rest] = parts.map((part) => String(part).padStart(2, "0"));
   return `${year}${rest.slice(0, 2).join("")}T${rest.slice(2).join("")}${utc ? "Z" : ""}`;
 }
 
 function calendarText(text: string) {
-  return text.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\r?\n/g, "\\n");
 }
 
-export function createCalendarEvent(plan: DiningPlan, cuisine: Cuisine, now = new Date()) {
+export function createCalendarEvent(
+  plan: DiningPlan,
+  cuisine: Cuisine,
+  now = new Date(),
+) {
   const start = scheduleStart(plan.schedule);
   const end = new Date(start);
   end.setHours(end.getHours() + mealLengthHours);
@@ -118,19 +184,35 @@ export function createCalendarEvent(plan: DiningPlan, cuisine: Cuisine, now = ne
   ].join("\r\n");
 }
 
-export function parseDiningInput(value: unknown, now = new Date()): DiningInput | null {
-  if (!isRecord(value) || typeof value.area !== "string" ||
-    !value.area.trim() || value.area.length > 120 ||
-    !Array.isArray(value.participants) || value.participants.length < minParticipants || value.participants.length > maxParticipants) return null;
+export function parseDiningInput(
+  value: unknown,
+  now = new Date(),
+): DiningInput | null {
+  if (
+    !isRecord(value) ||
+    typeof value.area !== "string" ||
+    !value.area.trim() ||
+    value.area.length > 120 ||
+    !Array.isArray(value.participants) ||
+    value.participants.length < minParticipants ||
+    value.participants.length > maxParticipants
+  )
+    return null;
   const schedule = parseSchedule(value.schedule, now);
   if (!schedule) return null;
 
   const participants: DiningParticipant[] = [];
   for (const person of value.participants) {
-    if (!isRecord(person) || !isChoiceList(person.liked, cuisines) ||
-      !isChoiceList(person.avoided, cuisines) || !isChoiceList(person.dietaryNeeds, dietaryNeeds) ||
+    if (
+      !isRecord(person) ||
+      !isChoiceList(person.liked, cuisines) ||
+      !isChoiceList(person.avoided, cuisines) ||
+      !isChoiceList(person.dietaryNeeds, dietaryNeeds) ||
       !budgets.some((budget) => budget === person.budget) ||
-      typeof person.notes !== "string" || person.notes.length > 300) return null;
+      typeof person.notes !== "string" ||
+      person.notes.length > 300
+    )
+      return null;
     const avoided = person.avoided;
     if (person.liked.some((cuisine) => avoided.includes(cuisine))) return null;
     const budget = budgets.find((option) => option === person.budget);
@@ -147,19 +229,32 @@ export function parseDiningInput(value: unknown, now = new Date()): DiningInput 
 }
 
 export function createDiningPlan(input: DiningInput): DiningPlan {
-  const budget = budgets.find((option) => input.participants.some((person) => person.budget === option));
+  const budget = budgets.find((option) =>
+    input.participants.some((person) => person.budget === option),
+  );
   if (!budget) throw new Error("Choose a budget for each person.");
-  const budgetSearch = { "$": "budget-friendly", "$$": "moderately priced", "$$$": "" }[budget];
+  const budgetSearch = {
+    $: "budget-friendly",
+    $$: "moderately priced",
+    $$$: "",
+  }[budget];
   const options = cuisines
-    .filter((cuisine) => !input.participants.some((person) => person.avoided.includes(cuisine)))
+    .filter(
+      (cuisine) =>
+        !input.participants.some((person) => person.avoided.includes(cuisine)),
+    )
     .map((cuisine) => {
-      const query = [budgetSearch, cuisine, "restaurants in", input.area].filter(Boolean).join(" ");
+      const query = [budgetSearch, cuisine, "restaurants in", input.area]
+        .filter(Boolean)
+        .join(" ");
       const url = new URL("https://www.google.com/maps/search/");
       url.searchParams.set("api", "1");
       url.searchParams.set("query", query);
       return {
         cuisine,
-        votes: input.participants.filter((person) => person.liked.includes(cuisine)).length,
+        votes: input.participants.filter((person) =>
+          person.liked.includes(cuisine),
+        ).length,
         mapsUrl: url.toString(),
       };
     })
@@ -171,14 +266,22 @@ export function createDiningPlan(input: DiningInput): DiningPlan {
     schedule: { ...input.schedule },
     groupSize: input.participants.length,
     budget,
-    dietaryNeeds: dietaryNeeds.filter((need) => input.participants.some((person) => person.dietaryNeeds.includes(need))),
-    notes: input.participants.flatMap((person, index) => person.notes ? [{ person: index + 1, text: person.notes }] : []),
+    dietaryNeeds: dietaryNeeds.filter((need) =>
+      input.participants.some((person) => person.dietaryNeeds.includes(need)),
+    ),
+    notes: input.participants.flatMap((person, index) =>
+      person.notes ? [{ person: index + 1, text: person.notes }] : [],
+    ),
     options,
   };
 }
 
-export function tallyVotes(options: readonly Cuisine[], votes: readonly GroupVote[]): VoteSummary {
-  if (new Set(options).size !== options.length) throw new Error("Shortlist options must be unique.");
+export function tallyVotes(
+  options: readonly Cuisine[],
+  votes: readonly GroupVote[],
+): VoteSummary {
+  if (new Set(options).size !== options.length)
+    throw new Error("Shortlist options must be unique.");
   if (votes.some((vote) => vote !== null && !options.includes(vote))) {
     throw new Error("Votes must be for a shortlisted option.");
   }
@@ -192,6 +295,10 @@ export function tallyVotes(options: readonly Cuisine[], votes: readonly GroupVot
   return {
     totals,
     votesCast,
-    leaders: highest ? totals.filter((total) => total.votes === highest).map((total) => total.cuisine) : [],
+    leaders: highest
+      ? totals
+          .filter((total) => total.votes === highest)
+          .map((total) => total.cuisine)
+      : [],
   };
 }
