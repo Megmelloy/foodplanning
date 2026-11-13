@@ -3,7 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Table Sync | Dinner, decided together",
-  description: "Gather your group's cravings and dealbreakers, get a shortlist, and vote on where to eat.",
+  description:
+    "Gather your group's cravings and dealbreakers, get a shortlist, and vote on where to eat.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
