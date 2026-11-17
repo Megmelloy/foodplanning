@@ -44,11 +44,11 @@
       <article class="content">
         <h2 id="1-introduction">1. Introduction</h2>
         <p>This document describes the design of Table Sync, the food-planning project in this repository. It records the current architecture, user flows, data structures, external integrations, quality goals, and verification approach. It is intended for the project team, instructors/reviewers, and future maintainers.</p>
-        <p>The primary scope is the implemented social-dining planner: a group enters a public area and dinner time, records individual tastes, creates a cuisine shortlist, votes on one device, and may export a calendar event. The repository also contains a legacy, opt-in AI meal-planning endpoint. It is documented here for completeness, but it is not connected to the current Table Sync interface.</p>
+        <p>The primary scope is the implemented social-dining planner: a group enters a public area and dinner time, joins on one device, swipes individual cuisine preferences, and creates a ranked shortlist. The organizer chooses a shortlisted cuisine directly and may export a calendar event. There is no voting step. The repository also contains a legacy, opt-in AI meal-planning endpoint. It is documented here for completeness, but it is not connected to the current Table Sync interface.</p>
         <p>This is a small-group, single-device application, not a restaurant booking system. It does not currently have user accounts, a database, persisted plans, cross-device participation, outbound invitations, or verified restaurant listings.</p>
 
         <h2 id="2-system-overview-architectural-design">2. System Overview (Architectural Design)</h2>
-        <p>The application is a Next.js App Router project using React and TypeScript. The social-dining experience is implemented as a client-rendered page. Its domain calculations and validation are synchronous TypeScript functions; no application server request is made to build or vote on a social-dining plan. The separate meal-plan route runs on the server and can call the OpenAI Responses API only when explicitly enabled and configured.</p>
+        <p>The application is a Next.js App Router project using React and TypeScript. The social-dining experience is implemented as a client-rendered page. Its domain calculations and validation are synchronous TypeScript functions; no application server request is made to build or select a social-dining plan. The separate meal-plan route runs on the server and can call the OpenAI Responses API only when explicitly enabled and configured.</p>
         <pre class="mermaid">flowchart LR
     Person[Organizer and participants]
     Browser[Web browser]
@@ -70,7 +70,7 @@
     API --&gt; Meal
     API --&gt;|Only when enabled and keyed| OpenAI
     OpenAI --&gt; API</pre>
-        <p>In the social-dining flow, the browser holds all current planning state in React memory. A refresh clears the group and its votes. Google Maps receives a search link containing the selected area, cuisine, and applicable budget wording; dietary needs and individual notes are not included. The user chooses a specific restaurant from Google's results and confirms suitability directly with that restaurant.</p>
+        <p>In the social-dining flow, the browser holds all current planning state in React memory. A refresh clears the group and its preferences. Google Maps receives a search link containing the selected area, cuisine, and applicable budget wording; dietary needs and individual notes are not included. The user chooses a specific restaurant from Google's results and confirms suitability directly with that restaurant.</p>
 
         <h2 id="3-stakeholders-architectural-design">3. Stakeholders (Architectural Design)</h2>
         <div class="table-wrap">
@@ -88,11 +88,11 @@
               </tr>
               <tr>
                 <td>Organizer</td>
-                <td>Set the public area and schedule; manage the guest list on the device; review the summary; break vote ties; finalize the pick.</td>
+                <td>Set the public area and schedule; remove guests on the device; review the summary; choose any shortlisted cuisine as the final pick.</td>
               </tr>
               <tr>
                 <td>Participants</td>
-                <td>Enter cuisine preferences, price comfort, dietary needs, and optional notes; cast or change a vote on the shared device.</td>
+                <td>Join on the current device; swipe cuisine preferences and enter price comfort, dietary needs, and optional notes.</td>
               </tr>
               <tr>
                 <td>Restaurant decision-makers (the group)</td>
@@ -127,11 +127,11 @@
             <tbody>
               <tr>
                 <td>Usability</td>
-                <td>A three-step, responsive flow separates scheduling, preferences, and voting. The page uses labeled controls, visible progress, inline errors, and vote totals. Participation is pass-the-device rather than remote.</td>
+                <td>A three-step, responsive flow separates scheduling, preferences, and shortlist selection. Cuisine cards support swipes, buttons, keyboard controls, reduced motion, explicit answer progress, and editing previous choices.</td>
               </tr>
               <tr>
                 <td>Correctness</td>
-                <td>Domain functions validate schedule and preference shapes, exclude any cuisine skipped by a participant, rank remaining cuisines by favorites, constrain votes to the shortlist, and handle ties explicitly. Automated tests cover these rules.</td>
+                <td>Domain functions validate schedule and preference shapes, exclude any cuisine skipped by a participant, and rank remaining cuisines by favorites. The UI requires every participant to answer all cuisines and limits organizer selection to the shortlist. Domain tests cover ranking, skips, and validation.</td>
               </tr>
               <tr>
                 <td>Privacy</td>
@@ -167,19 +167,19 @@
         <p>The planner is the <code>Home</code> client component in <code>src/app/page.tsx</code>. It presents three steps:</p>
         <ol>
           <li><strong>Where &amp; when:</strong> public area and a future date/time, from now through 365 days ahead.</li>
-          <li><strong>Tastes:</strong> 2–15 numbered participants (the organizer is Person 1), cuisine preferences, budget, dietary needs, and optional notes. The organizer alone can add or remove guests in this shared-device session.</li>
-          <li><strong>Vote:</strong> up to three cuisine searches, one optional vote per participant, an organizer tie-break when needed, and final-pick/calendar actions.</li>
+          <li><strong>Tastes:</strong> begin with Person 1 (the organizer), then use Join group to add local participants, up to 15 total. Joining switches to the new person. Each person answers all eight cuisines with Love/Open/Skip using swipes, buttons, or keyboard controls, and may set budget, dietary needs, and notes. Only the organizer removes guests. At least two completed profiles are required.</li>
+          <li><strong>Shortlist:</strong> up to three cuisine searches ranked by favorites. The organizer selects any shortlisted cuisine directly, with final-pick/calendar actions and no voting.</li>
         </ol>
-        <p>The planner owns transient form, plan, vote, error, and selection state. It delegates validation, ranking, tallying, schedule formatting, and calendar generation to <code>src/lib/social-dining.ts</code>.</p>
+        <p>The planner owns transient form, plan, error, and selection state. <code>src/app/cuisine-swipe-deck.tsx</code> handles cuisine gestures and review controls. The planner stores each person's explicitly reviewed cuisines separately from liked/avoided lists, so Open counts as answered rather than untouched. It delegates validation, ranking, schedule formatting, and calendar generation to <code>src/lib/social-dining.ts</code>.</p>
 
         <h4 id="5-1-2-design-considerations">5.1.2 Design Considerations</h4>
         <ul>
-          <li>The interface does not collect names or send invitations; guest labels are person numbers on the current device.</li>
-          <li>Editing the location, schedule, or preferences invalidates the previously generated plan and votes so stale results cannot be finalized.</li>
-          <li>An omitted cuisine preference means “Open.” Any participant's “Skip” excludes a cuisine. The lowest price range selected by anyone informs Maps search wording.</li>
+          <li>The interface does not collect names or send invitations; joining creates a numbered participant on the current device only. Switching to Person 1 is a UI role switch, not authentication.</li>
+          <li>Editing group membership, location, schedule, or preferences invalidates the previously generated plan and final choice so stale results cannot be finalized.</li>
+          <li>The UI requires an explicit Love, Open, or Skip for every cuisine. The domain represents Open as neither liked nor avoided. Any participant's Skip excludes a cuisine. The lowest price range selected by anyone informs Maps search wording.</li>
           <li>Dietary needs and notes are reminders for the group to confirm, not filters against verified menus. Search results are not guaranteed to match budget, opening hours, distance, accessibility, or group seating.</li>
           <li>Schedule values are interpreted in the browser's local time zone.</li>
-          <li>With no favorites, the fixed cuisine order provides exploration ideas. If all cuisines are skipped, the shortlist is empty and voting is unavailable.</li>
+          <li>With no favorites, the fixed cuisine order provides exploration ideas, not consensus recommendations. If all cuisines are skipped, the shortlist is empty and the group must revisit tastes.</li>
           <li>A finalized choice identifies a cuisine search, not a confirmed venue.</li>
         </ul>
 
@@ -213,27 +213,17 @@
     }
     class DiningOption {
       +cuisine: Cuisine
-      +votes: number
+      +loves: number
       +mapsUrl: string
-    }
-    class GroupVote {
-      +Cuisine or null
-    }
-    class VoteSummary {
-      +totals: CuisineVote[]
-      +votesCast: number
-      +leaders: Cuisine[]
     }
 
     DiningInput *-- DiningSchedule
     DiningInput &quot;1&quot; o-- &quot;2..15&quot; DiningParticipant
     DiningPlan *-- DiningSchedule
-    DiningPlan &quot;1&quot; o-- &quot;0..3&quot; DiningOption
-    DiningPlan ..&gt; VoteSummary : tallyVotes
-    DiningOption ..&gt; GroupVote : vote choice</pre>
+    DiningPlan &quot;1&quot; o-- &quot;0..3&quot; DiningOption</pre>
 
         <h4 id="5-1-4-sequence-diagrams">5.1.4 Sequence Diagrams</h4>
-        <p><strong>Planning and voting (all state remains in the browser):</strong></p>
+        <p><strong>Joining, swiping, and choosing (all state remains in the browser):</strong></p>
         <pre class="mermaid">sequenceDiagram
     actor Organizer
     actor GroupMember
@@ -243,31 +233,23 @@
     UI-&gt;&gt;Rules: parseSchedule(date, time)
     Rules--&gt;&gt;UI: Valid schedule or null
     loop Each participant
-        GroupMember-&gt;&gt;UI: Set likes, skips, budget, needs, notes
+        GroupMember-&gt;&gt;UI: Join locally; answer all cuisine cards; set budget, needs, notes
     end
     Organizer-&gt;&gt;UI: Build shortlist
     UI-&gt;&gt;Rules: parseDiningInput(group)
     Rules--&gt;&gt;UI: Validated input or null
     UI-&gt;&gt;Rules: createDiningPlan(input)
     Rules--&gt;&gt;UI: Up to three cuisine options and Maps URLs
-    loop Each participant
-        GroupMember-&gt;&gt;UI: Cast or change vote
-        UI-&gt;&gt;Rules: tallyVotes(options, votes)
-        Rules--&gt;&gt;UI: Totals and leader(s)
-    end
-    opt Tied leading cuisines
-        Organizer-&gt;&gt;UI: Choose tie-break
-    end
-    Organizer-&gt;&gt;UI: Lock in pick
+    Organizer-&gt;&gt;UI: Choose any shortlisted cuisine
     UI-&gt;&gt;Rules: createCalendarEvent(plan, cuisine)
     Rules--&gt;&gt;UI: Local-time two-hour .ics content
     UI--&gt;&gt;Organizer: Download calendar event / open Maps link</pre>
 
         <h3 id="5-2-social-dining-domain-logic">5.2 Social-Dining Domain Logic</h3>
         <h4 id="5-2-1-overview">5.2.1 Overview</h4>
-        <p><code>src/lib/social-dining.ts</code> defines the dining types and fixed choices, input parsing, schedule validation/formatting, invitation limits, shortlist generation, vote tallying, and iCalendar text creation. It has no network or database dependency.</p>
+        <p><code>src/lib/social-dining.ts</code> defines the dining types and fixed choices, input parsing, schedule validation/formatting, participant limits, shortlist generation, and iCalendar text creation. It has no network or database dependency.</p>
         <h4 id="5-2-2-design-considerations">5.2.2 Design Considerations</h4>
-        <p>The domain layer validates finite lists and bounds (2–15 participants, 120 characters for the area, 300 for notes, valid cuisine/dietary selections, and a future schedule no more than 365 days away). A person's liked and avoided cuisines cannot overlap. Shortlist generation excludes cuisines skipped by anyone, ranks remaining cuisines by number of likes, resolves equal ranking by the fixed cuisine order, and takes at most three. Vote tallying rejects duplicate options and votes outside the shortlist. Calendar values escape special text characters and represent a two-hour event in local time.</p>
+        <p>The domain layer validates finite lists and bounds (2–15 participants, 120 characters for the area, 300 for notes, valid cuisine/dietary selections, and a future schedule no more than 365 days away). A person's liked and avoided cuisines cannot overlap. Shortlist generation excludes cuisines skipped by anyone, ranks remaining cuisines by number of likes, resolves equal ranking by the fixed cuisine order, and takes at most three. The option's loves field counts preferences, not separate votes. Calendar values escape special text characters and represent a two-hour event in local time.</p>
         <h4 id="5-2-3-class-diagram">5.2.3 Class Diagram</h4>
         <p>The types and main operations are shown in section 5.1.3. The domain functions are exported operations, not class methods.</p>
         <h4 id="5-2-4-sequence-diagrams">5.2.4 Sequence Diagrams</h4>
@@ -363,7 +345,7 @@
       number personNumber
       string cuisineOrNoVote
     }</pre>
-        <p><strong>Social-dining constraints:</strong> A group contains 2–15 participants; each participant has a budget of <code>$</code>, <code>$$</code>, or <code>$$$</code>, unique valid liked/avoided cuisines, a finite set of dietary needs, and at most 300 characters of notes. An omitted vote is allowed. A submitted vote must select one of the generated options. The group summary unions dietary needs and keeps notes associated with person numbers.</p>
+        <p><strong>Social-dining constraints:</strong> A completed group contains 2–15 participants; each participant has a budget of <code>$</code>, <code>$$</code>, or <code>$$$</code>, unique valid liked/avoided cuisines, a finite set of dietary needs, and at most 300 characters of notes. The UI also tracks explicit answers to all eight cuisines, including Open. The organizer's final choice must be a generated option. The group summary unions dietary needs and keeps notes associated with person numbers.</p>
         <p>The legacy API has a separate payload: <code>PlanningInput</code> contains <code>days</code>, <code>servings</code>, and combined <code>preferences</code>; <code>MealPlan</code> contains one sequentially numbered meal per requested day and a grocery list. The legacy plan is held by the caller and is not saved by this application.</p>
 
         <h2 id="7-user-interface-design-detailed-design">7. User Interface Design (Detailed Design)</h2>
@@ -382,7 +364,7 @@
         <p>The visual system uses a warm cream background, dark ink text, tomato and herb accents, rounded cards, and large display headings. Inputs are labeled, related choices use fieldsets, current errors use alert semantics, and keyboard focus is visibly outlined. Vote totals and the selected event are presented in the page. Dietary needs and notes are explicitly presented as information to confirm, not verified filters.</p>
 
         <h2 id="8-error-handling-and-exception-management-detailed-design">8. Error Handling and Exception Management (Detailed Design)</h2>
-        <p>The social-dining UI validates area and schedule before advancing and reports invalid group input inline. The domain parsers return <code>null</code> for invalid untrusted input; domain invariants that should already be guaranteed by validated state (for example, an invalid internal budget or vote) throw an error. User edits clear prior plans and votes rather than retaining stale results.</p>
+        <p>The social-dining UI validates area and schedule before advancing and reports invalid or incomplete group input inline. The domain parsers return <code>null</code> for invalid untrusted input; domain invariants that should already be guaranteed by validated state (for example, an invalid internal budget) throw an error. User edits clear prior plans and final choices rather than retaining stale results.</p>
         <p>The legacy API returns JSON error messages with these HTTP statuses:</p>
         <div class="table-wrap">
           <table>
@@ -429,7 +411,7 @@
         </ul>
 
         <h2 id="10-performance-optimization-detailed-design">10. Performance Optimization (Detailed Design)</h2>
-        <p>The main workflow is client-side and uses bounded arrays: at most 15 people, eight cuisines, and three shortlist options. Schedule validation, shortlist ranking, and vote tallying are small in-memory operations. There is no application database, so indexing and query optimization do not apply. The application does not implement a cache for user plans.</p>
+        <p>The main workflow is client-side and uses bounded arrays: at most 15 people, eight cuisines, and three shortlist options. Schedule validation and shortlist ranking are small in-memory operations. There is no application database, so indexing and query optimization do not apply. The application does not implement a cache for user plans.</p>
         <p>The AI route bounds request size, output tokens, and provider wait time. No throughput or concurrency guarantees are claimed; the route should not be publicly enabled without rate limits and spending controls.</p>
 
         <h2 id="11-deployment-architecture-detailed-design">11. Deployment Architecture (Detailed Design)</h2>
@@ -472,7 +454,7 @@
     OpenAI[OpenAI Responses API&lt;br/&gt;HTTPS POST JSON]
 
     UI --&gt; Planned
-    UI --&gt;|Validate, rank, tally, format| Social
+    UI --&gt;|Validate, rank, format| Social
     Social --&gt;|Encoded area, cuisine, budget| Maps
     Social --&gt;|Local-time two-hour VEVENT| Calendar
     UI -. &quot;Optional request; not used by current UI&quot; .-&gt; Route
@@ -491,7 +473,7 @@
               <tr>
                 <td>Social-dining domain module (<code>src/lib/social-dining.ts</code>)</td>
                 <td>Synchronous TypeScript function calls</td>
-                <td>Validates area, future schedule (up to 365 days), and 2–15 participant profiles; ranks up to three non-skipped cuisines; tallies votes; formats <code>.ics</code> and Maps strings in browser memory.</td>
+                <td>Validates area, future schedule (up to 365 days), and 2–15 participant profiles; ranks up to three non-skipped cuisines by loves; formats <code>.ics</code> and Maps strings in browser memory.</td>
               </tr>
               <tr>
                 <td>Google Maps</td>
@@ -521,9 +503,9 @@
         <h2 id="13-testing-strategy-detailed-design">13. Testing Strategy (Detailed Design)</h2>
         <p>Tests use Node's built-in test runner (<code>node --test tests/*.test.mjs</code>) with JavaScript test files importing the TypeScript domain modules. Tests run offline and do not make paid AI calls.</p>
         <ul>
-          <li><strong>Unit/domain tests:</strong> 18 automated tests in <code>tests/social-dining.test.mjs</code> and <code>tests/meal-plan.test.mjs</code> validate planning and meal-plan inputs, schedule limits, 2–15 participant bounds, shortlist ranking and skips, Maps URL construction without leaking notes or dietary needs, vote totals and tie behavior, small-party invite limits, <code>.ics</code> calendar output, and meal-plan schema parsing.</li>
+          <li><strong>Unit/domain tests:</strong> automated tests in <code>tests/social-dining.test.mjs</code> and <code>tests/meal-plan.test.mjs</code> validate planning and meal-plan inputs, schedule limits, 2–15 participant bounds, shortlist ranking and skips, Maps URL construction without leaking notes or dietary needs, small-party capacity, <code>.ics</code> calendar output, and meal-plan schema parsing.</li>
           <li><strong>Integration/system tests:</strong> no browser-level end-to-end or deployed-system suite is currently configured. The AI endpoint is not exercised against a live provider in the test suite.</li>
-          <li><strong>Acceptance testing:</strong> use the user flows in sections 5.1 and 5.3 on <code>http://localhost:3000</code> and confirm restaurant details directly with the venue. No automated acceptance framework is configured.</li>
+          <li><strong>Acceptance testing:</strong> use the user flows in sections 5.1 and 5.3 on <code>http://localhost:3000</code>. Check local joining and the 15-person cap, separate per-person progress, explicit Open answers, swipe/button/keyboard choices, canceled or short drags, editing answers, incomplete-profile errors, organizer-only selection, all-skipped recovery, calendar export, and invalidation after edits. Confirm restaurant details directly with the venue. No automated acceptance framework is configured.</li>
           <li><strong>Static/build checks:</strong> run Prettier formatting verification, ESLint, Next.js route type generation and TypeScript type-checking, unit tests, and a production webpack build locally and in GitHub Actions (<code>.github/workflows/ci.yml</code>).</li>
         </ul>
         <p>Commands (macOS / Linux / CI):</p>
@@ -561,11 +543,11 @@ npm.cmd run build</code></pre>
               </tr>
               <tr>
                 <td>Organizer</td>
-                <td>Person 1, who controls the shared-device guest list and breaks vote ties.</td>
+                <td>Person 1, who can remove guests and chooses the final cuisine from the shortlist on the shared device. This is a UI role, not authenticated identity.</td>
               </tr>
               <tr>
                 <td>Participant</td>
-                <td>A numbered group member whose preferences and optional vote are entered on the device.</td>
+                <td>A numbered group member who joins and answers cuisine cards on the current device.</td>
               </tr>
               <tr>
                 <td>Cuisine shortlist</td>
@@ -595,7 +577,7 @@ npm.cmd run build</code></pre>
         <ul>
           <li><a href="./README.md">Project README</a> — setup, actual user behavior, privacy, and deployment limitations.</li>
           <li><a href="./src/app/page.tsx">Planner interface</a> — social-dining screens and transient UI state.</li>
-          <li><a href="./src/lib/social-dining.ts">Social-dining domain logic</a> — types, validation, schedule, shortlist, vote, and calendar rules.</li>
+          <li><a href="./src/lib/social-dining.ts">Social-dining domain logic</a> — types, validation, schedule, shortlist, and calendar rules.</li>
           <li><a href="./src/app/api/meal-plan/route.ts">Meal-plan API route</a> — optional provider integration and HTTP error handling.</li>
           <li><a href="./src/lib/meal-plan.ts">Meal-plan types and validation</a> — request and response shapes.</li>
           <li><a href="./tests/social-dining.test.mjs">Social-dining tests</a> and <a href="./tests/meal-plan.test.mjs">meal-plan tests</a> — automated domain validation.</li>
