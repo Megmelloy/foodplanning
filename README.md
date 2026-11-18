@@ -21,17 +21,22 @@ Table Sync's Small Group flow has three steps, shown in a progress bar:
 1. **Where & when**: the organizer enters a public city, neighborhood, or ZIP
    code and one dinner date and time. The time must be in the future and
    within the next 365 days.
-2. **Tastes**: pass the device around. Person 1 is the organizer and is the
-   only one who can invite or remove guests, up to 15 people total (14
-   invites). Each person marks each cuisine Love, Open, or Skip, and chooses a
-   comfortable price range, dietary needs, and optional notes such as outdoor
-   seating.
-3. **Vote**: review the shortlist, vote, and lock in the group's pick. The
+2. **Tastes**: Person 1 is the organizer. Use **Join group** to add and switch
+   to a participant on this device, up to 15 people total. Only the organizer
+   can remove guests. Each person answers all eight cuisine cards: swipe right
+   for Love, left for Skip, or tap Open. Buttons work without gestures; when a
+   card has keyboard focus, left/down/right choose Skip/Open/Love. Tap any
+   reviewed choice to change it. Progress is kept separately for each person.
+   Each person can also choose a comfortable price range, dietary needs, and
+   optional notes such as outdoor seating. At least two people must join and
+   everyone must answer every cuisine before building the shortlist.
+3. **Shortlist**: review the ranked options; the organizer chooses any
+   shortlisted cuisine directly, without a voting step. The
    final pick shows the date and time and can be downloaded as a calendar
    event (`.ics`, two hours long, in the device's local time).
 
 A live group snapshot shows the area, dinner time, group size, remaining
-invites, price range, dietary needs, and notes to confirm with the restaurant.
+spots, price range, dietary needs, and notes to confirm with the restaurant.
 
 The app excludes any cuisine skipped by anyone, ranks the remaining cuisines
 by number of favorites, and offers up to three Google Maps search links.
@@ -45,16 +50,15 @@ results are not verified for budget, dietary suitability, availability,
 distance, or group seating. Confirm prices, hours, seating, and dietary needs
 directly with the restaurant.
 
-After the shortlist appears, the group can pass one device around to vote.
-Each person can cast or change one optional vote for a shortlisted cuisine.
-The highest-voted cuisine can be finalized; if options tie, the organizer must
-choose among the tied options. Votes and the final choice stay on the current
-device and identify a cuisine search, not a verified restaurant.
+The organizer's final choice identifies a cuisine search, not a verified
+restaurant. Editing group membership, the schedule, area, or anyone's
+preferences clears the old shortlist and final choice.
 
 This version does not fetch actual restaurant listings, check opening hours
-for the chosen time, send invitations, or support voting across devices,
-accounts, invite links, or saved profiles. Invited guests are added on the
-same device. Opening a Maps link shows
+for the chosen time, send invitations, or support participation across devices,
+accounts, invite links, or saved profiles. **Join group** only adds a numbered
+participant in the current browser tab. Selecting Person 1 is a UI role switch,
+not authentication. Opening a Maps link shows
 Google's current search results for the selected cuisine and area. Live venue
 features need a restaurant data provider, and independent group participation
 needs shared storage and participant identification.
@@ -80,8 +84,9 @@ Track upstream fixes and rerun `npm.cmd audit` when updating dependencies.
 
 ## Project structure
 
-- `src/app/page.tsx`: Table Sync's three-step planner, group snapshot, shortlist, and voting.
-- `src/lib/social-dining.ts`: dining types, validation, scheduling, invite limits, ranking, search links, calendar export, and vote tallying.
+- `src/app/page.tsx`: Table Sync's three-step planner, local joining, group snapshot, shortlist, and organizer selection.
+- `src/app/cuisine-swipe-deck.tsx`: cuisine cards, pointer/keyboard/button choices, and preference review.
+- `src/lib/social-dining.ts`: dining types, validation, scheduling, participant limits, ranking, search links, and calendar export.
 - `src/app/api/meal-plan/route.ts`: legacy server-only AI cooking endpoint.
 - `src/lib/meal-plan.ts`: legacy cooking types, validation, and output schema.
 - `tests/`: social-dining and legacy meal-plan validation tests.
