@@ -10,7 +10,7 @@ import {
   maxParticipants,
   parseDiningInput,
   parseSchedule,
-  tallyVotes,
+  recordCuisinePreference,
 } from "../src/lib/social-dining.ts";
 
 const now = new Date(2026, 9, 21, 15, 30);
@@ -26,6 +26,49 @@ function person(changes = {}) {
     ...changes,
   };
 }
+
+test("records explicit Open answers without treating untouched cuisines as reviewed", () => {
+  const original = { ...person(), reviewed: [] };
+  const answer = recordCuisinePreference(original, "Italian", "open");
+  assert.deepEqual(answer, {
+    liked: [],
+    avoided: [],
+    reviewed: ["Italian"],
+  });
+  assert.deepEqual(original.reviewed, []);
+});
+
+test("editing a swipe replaces its preference without duplicating completion", () => {
+  let draft = { ...person(), reviewed: [] };
+  for (const [preference, liked, avoided] of [
+    ["skip", [], ["Italian"]],
+    ["love", ["Italian"], []],
+    ["open", [], []],
+  ]) {
+    draft = {
+      ...draft,
+      ...recordCuisinePreference(draft, "Italian", preference),
+    };
+    assert.deepEqual(draft.liked, liked);
+    assert.deepEqual(draft.avoided, avoided);
+    assert.deepEqual(draft.reviewed, ["Italian"]);
+  }
+});
+
+test("keeps each person's swipe answers independent and includes Open in completion", () => {
+  let first = { ...person(), reviewed: [] };
+  const second = { ...person(), reviewed: [] };
+  for (const cuisine of cuisines) {
+    first = {
+      ...first,
+      ...recordCuisinePreference(first, cuisine, "open"),
+    };
+  }
+  assert.deepEqual(first.reviewed, cuisines);
+  assert.deepEqual(first.liked, []);
+  assert.deepEqual(first.avoided, []);
+  assert.deepEqual(second, { ...person(), reviewed: [] });
+});
 
 test("accepts 2-15 profiles, trims input, and preserves independent lists", () => {
   for (const count of [2, maxParticipants]) {
@@ -94,7 +137,7 @@ test("ranks by favorites, honors everyone's skips, and uses the lowest budget", 
     ],
   });
   assert.deepEqual(
-    plan.options.map((option) => [option.cuisine, option.votes]),
+    plan.options.map((option) => [option.cuisine, option.loves]),
     [
       ["Italian", 2],
       ["Thai", 1],
@@ -146,30 +189,6 @@ test("handles no favorites deterministically and never falls back to a skipped c
     participants: [person({ avoided: [...cuisines] }), person()],
   });
   assert.deepEqual(excluded.options, []);
-});
-
-test("tallies one optional vote per person and reports a single leader", () => {
-  const summary = tallyVotes(
-    ["Italian", "Thai", "Japanese"],
-    ["Thai", null, "Thai", "Italian"],
-  );
-  assert.deepEqual(summary.totals, [
-    { cuisine: "Italian", votes: 1 },
-    { cuisine: "Thai", votes: 2 },
-    { cuisine: "Japanese", votes: 0 },
-  ]);
-  assert.equal(summary.votesCast, 3);
-  assert.deepEqual(summary.leaders, ["Thai"]);
-});
-
-test("reports ties, no votes, and rejects votes outside the shortlist", () => {
-  assert.deepEqual(
-    tallyVotes(["Italian", "Thai"], ["Italian", "Thai"]).leaders,
-    ["Italian", "Thai"],
-  );
-  assert.deepEqual(tallyVotes(["Italian", "Thai"], [null, null]).leaders, []);
-  assert.throws(() => tallyVotes(["Italian"], ["Thai"]), /shortlisted option/);
-  assert.throws(() => tallyVotes(["Italian", "Italian"], []), /unique/);
 });
 
 test("accepts a future date and time within a year and rejects past or invalid schedules", () => {

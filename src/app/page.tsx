@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { CuisineSwipeDeck } from "./cuisine-swipe-deck";
 import {
   budgets,
   createCalendarEvent,
@@ -10,22 +11,20 @@ import {
   formatSchedule,
   invitesRemaining,
   maxDaysAhead,
-  maxInvites,
   maxParticipants,
   minParticipants,
   parseDiningInput,
   parseSchedule,
-  tallyVotes,
+  recordCuisinePreference,
   type Budget,
   type Cuisine,
+  type CuisinePreference,
   type DiningParticipant,
   type DiningPlan,
-  type GroupVote,
 } from "@/lib/social-dining";
 
-type PersonDraft = DiningParticipant & { id: number };
+type PersonDraft = DiningParticipant & { id: number; reviewed: Cuisine[] };
 type Step = 1 | 2 | 3;
-type Preference = "love" | "open" | "skip";
 
 const cuisineIcons: Record<Cuisine, string> = {
   Italian: "🍝",
@@ -45,25 +44,7 @@ const budgetLabels: Record<Budget, string> = {
 const steps: { number: Step; label: string; hint: string }[] = [
   { number: 1, label: "Where & when", hint: "Area and time" },
   { number: 2, label: "Tastes", hint: "Loves and skips" },
-  { number: 3, label: "Vote", hint: "Decide together" },
-];
-const preferences: { value: Preference; label: string; checked: string }[] = [
-  {
-    value: "love",
-    label: "Love",
-    checked: "has-[:checked]:bg-herb has-[:checked]:text-white",
-  },
-  {
-    value: "open",
-    label: "Open",
-    checked:
-      "has-[:checked]:bg-white has-[:checked]:text-ink has-[:checked]:shadow-sm",
-  },
-  {
-    value: "skip",
-    label: "Skip",
-    checked: "has-[:checked]:bg-tomato has-[:checked]:text-white",
-  },
+  { number: 3, label: "Shortlist", hint: "Choose and save" },
 ];
 
 const card =
@@ -76,6 +57,7 @@ const secondaryButton =
 function newPerson(id: number): PersonDraft {
   return {
     id,
+    reviewed: [],
     liked: [],
     avoided: [],
     dietaryNeeds: [],
@@ -84,19 +66,8 @@ function newPerson(id: number): PersonDraft {
   };
 }
 
-function preferenceFor(
-  person: DiningParticipant,
-  cuisine: Cuisine,
-): Preference {
-  if (person.liked.includes(cuisine)) return "love";
-  return person.avoided.includes(cuisine) ? "skip" : "open";
-}
-
-function hasInput(person: DiningParticipant) {
-  return (
-    person.liked.length + person.avoided.length + person.dietaryNeeds.length >
-      0 || person.notes.trim() !== ""
-  );
+function hasCompletedTastes(person: PersonDraft) {
+  return person.reviewed.length === cuisines.length;
 }
 
 function StepHeading({
@@ -134,17 +105,12 @@ export default function Home() {
   const [errorField, setErrorField] = useState<"area" | "schedule" | null>(
     null,
   );
-  const [people, setPeople] = useState<PersonDraft[]>([
-    newPerson(1),
-    newPerson(2),
-  ]);
-  const [nextId, setNextId] = useState(3);
+  const [people, setPeople] = useState<PersonDraft[]>([newPerson(1)]);
+  const [nextId, setNextId] = useState(2);
   const [activeId, setActiveId] = useState(1);
   const [step, setStep] = useState<Step>(1);
   const [plan, setPlan] = useState<DiningPlan | null>(null);
   const [error, setError] = useState("");
-  const [votes, setVotes] = useState<GroupVote[]>([]);
-  const [tieChoice, setTieChoice] = useState<Cuisine | null>(null);
   const [finalChoice, setFinalChoice] = useState<Cuisine | null>(null);
 
   const activeIndex = Math.max(
@@ -152,19 +118,6 @@ export default function Home() {
     people.findIndex((person) => person.id === activeId),
   );
   const activePerson = people[activeIndex];
-  const voteSummary = plan
-    ? tallyVotes(
-        plan.options.map((option) => option.cuisine),
-        votes,
-      )
-    : null;
-  const leaders = voteSummary?.leaders ?? [];
-  const decision =
-    leaders.length === 1
-      ? leaders[0]
-      : tieChoice && leaders.includes(tieChoice)
-        ? tieChoice
-        : null;
   const finalOption = plan?.options.find(
     (option) => option.cuisine === finalChoice,
   );
@@ -180,7 +133,7 @@ export default function Home() {
       ? [{ person: index + 1, text: person.notes.trim() }]
       : [],
   );
-  const readyCount = people.filter(hasInput).length;
+  const readyCount = people.filter(hasCompletedTastes).length;
   const organizer = people[0];
   const guests = people.slice(1);
   const organizerActive = activePerson?.id === organizer.id;
@@ -212,14 +165,12 @@ export default function Home() {
 
   function clearPlan() {
     setPlan(null);
-    setVotes([]);
-    setTieChoice(null);
     setFinalChoice(null);
     setError("");
     setErrorField(null);
   }
 
-  function updatePerson(id: number, changes: Partial<DiningParticipant>) {
+  function updatePerson(id: number, changes: Partial<Omit<PersonDraft, "id">>) {
     setPeople((current) =>
       current.map((person) =>
         person.id === id ? { ...person, ...changes } : person,
@@ -231,30 +182,24 @@ export default function Home() {
   function setPreference(
     person: PersonDraft,
     cuisine: Cuisine,
-    preference: Preference,
+    preference: CuisinePreference,
   ) {
-    const liked = person.liked.filter((item) => item !== cuisine);
-    const avoided = person.avoided.filter((item) => item !== cuisine);
-    updatePerson(person.id, {
-      liked: preference === "love" ? [...liked, cuisine] : liked,
-      avoided: preference === "skip" ? [...avoided, cuisine] : avoided,
-    });
+    updatePerson(
+      person.id,
+      recordCuisinePreference(person, cuisine, preference),
+    );
   }
 
-  function inviteGuest() {
-    if (!organizerActive || invitesLeft === 0) return;
+  function joinGroup() {
+    if (invitesLeft === 0) return;
     setPeople((current) => [...current, newPerson(nextId)]);
+    setActiveId(nextId);
     setNextId((current) => current + 1);
     clearPlan();
   }
 
   function removeGuest(id: number) {
-    if (
-      !organizerActive ||
-      id === organizer.id ||
-      people.length <= minParticipants
-    )
-      return;
+    if (!organizerActive || id === organizer.id || people.length <= 1) return;
     setPeople((current) => current.filter((person) => person.id !== id));
     clearPlan();
   }
@@ -290,6 +235,12 @@ export default function Home() {
   }
 
   function buildShortlist() {
+    if (people.length < minParticipants || readyCount !== people.length) {
+      setError(
+        `At least ${minParticipants} people must join, and everyone must answer all ${cuisines.length} cuisines before building the shortlist.`,
+      );
+      return;
+    }
     if (plan) {
       showStep(3);
       return;
@@ -309,18 +260,8 @@ export default function Home() {
     }
     const nextPlan = createDiningPlan(input);
     setPlan(nextPlan);
-    setVotes(Array.from({ length: nextPlan.groupSize }, () => null));
-    setTieChoice(null);
     setFinalChoice(null);
     showStep(3);
-  }
-
-  function updateVote(person: number, vote: GroupVote) {
-    setVotes((current) =>
-      current.map((item, index) => (index === person ? vote : item)),
-    );
-    setTieChoice(null);
-    setFinalChoice(null);
   }
 
   return (
@@ -371,7 +312,8 @@ export default function Home() {
               </h1>
               <p className="mt-5 max-w-xl text-lg text-white/75">
                 Collect everyone&apos;s cravings and dealbreakers, get a
-                shortlist that respects all of them, and vote in minutes.
+                shortlist that respects all of them, and choose dinner in
+                minutes.
               </p>
             </div>
             <div aria-hidden className="hidden grid-cols-4 gap-3 md:grid">
@@ -549,7 +491,7 @@ export default function Home() {
                     [
                       "💛",
                       "Share tastes",
-                      "The organizer invites the group; everyone marks loves and skips.",
+                      "Join on this device and swipe cuisines Love, Open, or Skip.",
                     ],
                     [
                       "✨",
@@ -558,8 +500,8 @@ export default function Home() {
                     ],
                     [
                       "🗓️",
-                      "Vote and save",
-                      "Lock in the pick and add it to everyone's calendar.",
+                      "Choose and save",
+                      "The organizer chooses a pick to add to everyone's calendar.",
                     ],
                   ].map(([icon, title, text]) => (
                     <li key={title} className="rounded-2xl bg-cream/70 p-4">
@@ -585,7 +527,7 @@ export default function Home() {
                   number={2}
                   id="tastes-heading"
                   title="What's everyone craving?"
-                  description="Pass the device around. Mark each cuisine Love, Open, or Skip; one skip removes it for everyone."
+                  description="Join the group on this device. Each person answers every cuisine with Love, Open, or Skip; one skip removes it for everyone."
                 />
                 <div
                   role="group"
@@ -604,7 +546,7 @@ export default function Home() {
                       >
                         <span
                           aria-hidden
-                          className={`h-2 w-2 rounded-full ${hasInput(person) ? "bg-herb" : active ? "bg-white/40" : "bg-ink/20"}`}
+                          className={`h-2 w-2 rounded-full ${hasCompletedTastes(person) ? "bg-herb" : active ? "bg-white/40" : "bg-ink/20"}`}
                         />
                         Person {index + 1}
                         {index === 0 && (
@@ -615,9 +557,9 @@ export default function Home() {
                           </span>
                         )}
                         <span className="sr-only">
-                          {hasInput(person)
-                            ? ", tastes added"
-                            : ", no tastes yet"}
+                          {hasCompletedTastes(person)
+                            ? ", tastes complete"
+                            : `, ${person.reviewed.length} of ${cuisines.length} cuisines answered`}
                         </span>
                       </button>
                     );
@@ -627,7 +569,23 @@ export default function Home() {
                   </span>
                 </div>
 
-                {organizerActive ? (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-herb/5 p-4">
+                  <p className="text-sm text-ink/65" role="status">
+                    {invitesLeft
+                      ? `${invitesLeft} spots left. Joining adds a person on this device only.`
+                      : `Group is full at ${maxParticipants} people.`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={joinGroup}
+                    disabled={invitesLeft === 0}
+                    className="rounded-full bg-herb px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-ink/25"
+                  >
+                    + Join group
+                  </button>
+                </div>
+
+                {organizerActive && guests.length > 0 ? (
                   <section
                     aria-labelledby="invite-heading"
                     className="mt-4 rounded-[1.5rem] border border-herb/25 bg-herb/5 p-4"
@@ -640,20 +598,7 @@ export default function Home() {
                         >
                           Organizer: guest list
                         </h3>
-                        <p className="text-xs text-ink/60" aria-live="polite">
-                          {invitesLeft
-                            ? `${invitesLeft} of ${maxInvites} invites left for a small party.`
-                            : `Small party is full at ${maxParticipants} people.`}
-                        </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={inviteGuest}
-                        disabled={invitesLeft === 0}
-                        className="rounded-full bg-herb px-4 py-2 text-sm font-semibold text-white transition hover:bg-herb/90 disabled:cursor-not-allowed disabled:bg-ink/25"
-                      >
-                        + Invite a guest
-                      </button>
                     </div>
                     <ul className="mt-3 flex flex-wrap gap-2">
                       {guests.map((guest, index) => (
@@ -665,7 +610,6 @@ export default function Home() {
                           <button
                             type="button"
                             onClick={() => removeGuest(guest.id)}
-                            disabled={people.length <= minParticipants}
                             aria-label={`Remove Person ${index + 2}`}
                             className="grid h-6 w-6 place-items-center rounded-full text-ink/50 transition hover:bg-tomato/10 hover:text-tomato disabled:cursor-not-allowed disabled:opacity-30"
                           >
@@ -674,16 +618,11 @@ export default function Home() {
                         </li>
                       ))}
                     </ul>
-                    {people.length <= minParticipants && (
-                      <p className="mt-2 text-xs text-ink/55">
-                        You need at least one guest.
-                      </p>
-                    )}
                   </section>
                 ) : (
                   <p className="mt-4 rounded-2xl bg-ink/5 px-4 py-3 text-xs text-ink/60">
-                    <span aria-hidden>🔒</span> Only the organizer (Person 1)
-                    can invite or remove people.
+                    At least two people must join. Select Person 1 to manage the
+                    guest list; everyone uses this browser tab.
                   </p>
                 )}
 
@@ -697,54 +636,15 @@ export default function Home() {
                     )}
                   </h3>
 
-                  <h4 className="mt-5 text-sm font-semibold">Cuisines</h4>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    {cuisines.map((cuisine) => {
-                      const selected = preferenceFor(activePerson, cuisine);
-                      return (
-                        <fieldset
-                          key={cuisine}
-                          className="rounded-2xl border border-ink/10 bg-white p-3"
-                        >
-                          <legend className="sr-only">{cuisine}</legend>
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="flex min-w-0 items-center gap-3 font-semibold">
-                              <span
-                                aria-hidden
-                                className="grid h-10 w-10 place-items-center rounded-xl bg-cream text-xl"
-                              >
-                                {cuisineIcons[cuisine]}
-                              </span>
-                              {cuisine}
-                            </span>
-                            <div className="ml-auto flex rounded-xl bg-ink/5 p-1">
-                              {preferences.map((option) => (
-                                <label
-                                  key={option.value}
-                                  className={`choice cursor-pointer rounded-lg px-2.5 py-1.5 text-xs font-bold text-ink/55 transition ${option.checked}`}
-                                >
-                                  <input
-                                    type="radio"
-                                    className="sr-only"
-                                    name={`pref-${activePerson.id}-${cuisine}`}
-                                    checked={selected === option.value}
-                                    onChange={() =>
-                                      setPreference(
-                                        activePerson,
-                                        cuisine,
-                                        option.value,
-                                      )
-                                    }
-                                  />
-                                  {option.label}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
-                        </fieldset>
-                      );
-                    })}
-                  </div>
+                  <CuisineSwipeDeck
+                    key={activePerson.id}
+                    person={activePerson}
+                    reviewed={activePerson.reviewed}
+                    icons={cuisineIcons}
+                    onChoose={(cuisine, preference) =>
+                      setPreference(activePerson, cuisine, preference)
+                    }
+                  />
 
                   <fieldset className="mt-6">
                     <legend className="text-sm font-semibold">
@@ -879,7 +779,7 @@ export default function Home() {
               </section>
             )}
 
-            {step === 3 && plan && voteSummary && (
+            {step === 3 && plan && (
               <div className="space-y-6">
                 <section className={card} aria-labelledby="shortlist-heading">
                   <StepHeading
@@ -915,10 +815,6 @@ export default function Home() {
                     <ol className="grid gap-4 md:grid-cols-3">
                       {plan.options.map((option, index) => {
                         const top = index === 0;
-                        const voteCount =
-                          voteSummary.totals.find(
-                            (total) => total.cuisine === option.cuisine,
-                          )?.votes ?? 0;
                         return (
                           <li
                             key={option.cuisine}
@@ -940,8 +836,8 @@ export default function Home() {
                             <p
                               className={`mt-1 text-sm ${top ? "text-white/75" : "text-ink/60"}`}
                             >
-                              {option.votes
-                                ? `${option.votes} of ${plan.groupSize} love it`
+                              {option.loves
+                                ? `${option.loves} of ${plan.groupSize} love it`
                                 : "No one's favorite, no one skipped it"}
                             </p>
                             <div
@@ -951,13 +847,24 @@ export default function Home() {
                               <div
                                 className={`h-full rounded-full ${top ? "bg-saffron" : "bg-herb"}`}
                                 style={{
-                                  width: `${(option.votes / plan.groupSize) * 100}%`,
+                                  width: `${(option.loves / plan.groupSize) * 100}%`,
                                 }}
                               />
                             </div>
-                            <p className="mt-3 text-sm font-semibold">
-                              {voteCount} {voteCount === 1 ? "vote" : "votes"}
-                            </p>
+                            <button
+                              type="button"
+                              disabled={!organizerActive}
+                              aria-pressed={finalChoice === option.cuisine}
+                              onClick={() => {
+                                if (organizerActive)
+                                  setFinalChoice(option.cuisine);
+                              }}
+                              className={`mt-4 rounded-xl px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${top ? "bg-saffron text-ink" : "bg-ink text-white"}`}
+                            >
+                              {finalChoice === option.cuisine
+                                ? `Chosen: ${option.cuisine}`
+                                : `Choose ${option.cuisine}`}
+                            </button>
                             <a
                               href={option.mapsUrl}
                               target="_blank"
@@ -980,160 +887,25 @@ export default function Home() {
                     area only. Results aren&apos;t verified for price, hours, or
                     dietary needs.
                   </p>
+                  {plan.options.length > 0 && (
+                    <div className="mt-4 rounded-2xl bg-cream/70 p-4 text-sm">
+                      <p>
+                        The organizer chooses any shortlisted cuisine. Equal
+                        favorites use the fixed cuisine order, not a group
+                        consensus.
+                      </p>
+                      {!organizerActive && (
+                        <button
+                          type="button"
+                          className={`${secondaryButton} mt-3`}
+                          onClick={() => setActiveId(organizer.id)}
+                        >
+                          Return to organizer
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </section>
-
-                {plan.options.length > 0 && (
-                  <section className={card} aria-labelledby="vote-heading">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                      <div>
-                        <p className="text-xs font-bold uppercase tracking-[0.2em] text-tomato">
-                          Group vote
-                        </p>
-                        <h2
-                          id="vote-heading"
-                          className="mt-2 font-display text-3xl font-semibold tracking-tight"
-                        >
-                          Pass the phone, cast your votes
-                        </h2>
-                        <p className="mt-2 text-ink/65">
-                          One vote each. Change it anytime before you lock it
-                          in.
-                        </p>
-                      </div>
-                      <p className="shrink-0 self-start rounded-full bg-herb/10 px-4 py-2 text-sm font-semibold text-herb sm:self-auto">
-                        {voteSummary.votesCast}/{plan.groupSize} voted
-                      </p>
-                    </div>
-
-                    <div className="mt-6 space-y-3">
-                      {votes.map((vote, index) => (
-                        <fieldset
-                          key={index}
-                          className="rounded-2xl border border-ink/10 p-3"
-                        >
-                          <legend className="sr-only">
-                            Person {index + 1}&apos;s vote
-                          </legend>
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                            <span
-                              aria-hidden
-                              className="w-24 shrink-0 text-sm font-semibold"
-                            >
-                              Person {index + 1}
-                            </span>
-                            <div className="flex flex-wrap gap-2">
-                              {[
-                                ...plan.options.map((option) => option.cuisine),
-                                null,
-                              ].map((choice) => (
-                                <label
-                                  key={choice ?? "none"}
-                                  className="choice cursor-pointer rounded-full border border-ink/15 px-3.5 py-2 text-sm font-medium transition has-[:checked]:border-ink has-[:checked]:bg-ink has-[:checked]:text-white"
-                                >
-                                  <input
-                                    type="radio"
-                                    className="sr-only"
-                                    name={`vote-${index}`}
-                                    checked={vote === choice}
-                                    onChange={() => updateVote(index, choice)}
-                                  />
-                                  {choice ? (
-                                    <>
-                                      <span aria-hidden>
-                                        {cuisineIcons[choice]}
-                                      </span>{" "}
-                                      {choice}
-                                    </>
-                                  ) : (
-                                    "Not yet"
-                                  )}
-                                </label>
-                              ))}
-                            </div>
-                          </div>
-                        </fieldset>
-                      ))}
-                    </div>
-
-                    <div className="mt-6 rounded-[1.5rem] bg-cream/70 p-5">
-                      <h3 className="text-sm font-semibold">Live tally</h3>
-                      <ul className="mt-3 space-y-3" aria-label="Vote totals">
-                        {voteSummary.totals.map((total) => (
-                          <li key={total.cuisine}>
-                            <div className="flex justify-between text-sm">
-                              <span>
-                                <span aria-hidden>
-                                  {cuisineIcons[total.cuisine]}
-                                </span>{" "}
-                                {total.cuisine}
-                              </span>
-                              <span className="font-semibold">
-                                {total.votes}{" "}
-                                {total.votes === 1 ? "vote" : "votes"}
-                              </span>
-                            </div>
-                            <div
-                              aria-hidden
-                              className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-ink/10"
-                            >
-                              <div
-                                className={`h-full rounded-full transition-all ${leaders.includes(total.cuisine) ? "bg-tomato" : "bg-ink/30"}`}
-                                style={{
-                                  width: `${voteSummary.votesCast ? (total.votes / voteSummary.votesCast) * 100 : 0}%`,
-                                }}
-                              />
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    {leaders.length > 1 && (
-                      <fieldset className="mt-5 rounded-2xl border border-saffron bg-saffron/15 p-4">
-                        <legend className="px-1 text-sm font-semibold">
-                          It&apos;s a tie. Organizer, break it:
-                        </legend>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {leaders.map((leader) => (
-                            <label
-                              key={leader}
-                              className="choice cursor-pointer rounded-full border border-ink/20 bg-white px-3.5 py-2 text-sm font-medium transition has-[:checked]:border-ink has-[:checked]:bg-ink has-[:checked]:text-white"
-                            >
-                              <input
-                                type="radio"
-                                className="sr-only"
-                                name="tie-choice"
-                                checked={tieChoice === leader}
-                                onChange={() => {
-                                  setTieChoice(leader);
-                                  setFinalChoice(null);
-                                }}
-                              />
-                              <span aria-hidden>{cuisineIcons[leader]}</span>{" "}
-                              {leader}
-                            </label>
-                          ))}
-                        </div>
-                      </fieldset>
-                    )}
-
-                    <button
-                      type="button"
-                      disabled={!decision}
-                      className={`${primaryButton} mt-6 w-full`}
-                      onClick={() => setFinalChoice(decision)}
-                    >
-                      Lock in the group&apos;s pick
-                    </button>
-                    {!decision && (
-                      <p className="mt-2 text-center text-xs text-ink/55">
-                        {voteSummary.votesCast === 0
-                          ? "Cast at least one vote to lock in a pick."
-                          : "Choose a tie-break option to lock in a pick."}
-                      </p>
-                    )}
-                  </section>
-                )}
 
                 {finalOption && (
                   <section
@@ -1214,10 +986,13 @@ export default function Home() {
                 {[
                   ["Area", area.trim() || "Not set yet"],
                   ["When", when ?? "Not set yet"],
-                  ["People", `${people.length} · ${readyCount} with tastes`],
+                  [
+                    "People",
+                    `${people.length} · ${readyCount} tastes complete`,
+                  ],
                   [
                     "Guests",
-                    `${guests.length} invited · ${invitesLeft} spots left`,
+                    `${guests.length} joined · ${invitesLeft} spots left`,
                   ],
                   [
                     "Price",

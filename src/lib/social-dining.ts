@@ -25,6 +25,7 @@ export const maxDaysAhead = 365;
 export const mealLengthHours = 2;
 
 export type Cuisine = (typeof cuisines)[number];
+export type CuisinePreference = "love" | "open" | "skip";
 export type DietaryNeed = (typeof dietaryNeeds)[number];
 export type Budget = (typeof budgets)[number];
 export type DiningParticipant = {
@@ -50,19 +51,28 @@ export type DiningPlan = {
   budget: Budget;
   dietaryNeeds: DietaryNeed[];
   notes: { person: number; text: string }[];
-  options: { cuisine: Cuisine; votes: number; mapsUrl: string }[];
+  options: { cuisine: Cuisine; loves: number; mapsUrl: string }[];
 };
-export type GroupVote = Cuisine | null;
-export type VoteSummary = {
-  totals: { cuisine: Cuisine; votes: number }[];
-  votesCast: number;
-  leaders: Cuisine[];
-};
+
+export function recordCuisinePreference(
+  person: DiningParticipant & { reviewed: Cuisine[] },
+  cuisine: Cuisine,
+  preference: CuisinePreference,
+) {
+  const liked = person.liked.filter((item) => item !== cuisine);
+  const avoided = person.avoided.filter((item) => item !== cuisine);
+  return {
+    liked: preference === "love" ? [...liked, cuisine] : liked,
+    avoided: preference === "skip" ? [...avoided, cuisine] : avoided,
+    reviewed: person.reviewed.includes(cuisine)
+      ? person.reviewed
+      : [...person.reviewed, cuisine],
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
 function isChoiceList<T extends string>(
   value: unknown,
   choices: readonly T[],
@@ -252,13 +262,13 @@ export function createDiningPlan(input: DiningInput): DiningPlan {
       url.searchParams.set("query", query);
       return {
         cuisine,
-        votes: input.participants.filter((person) =>
+        loves: input.participants.filter((person) =>
           person.liked.includes(cuisine),
         ).length,
         mapsUrl: url.toString(),
       };
     })
-    .sort((a, b) => b.votes - a.votes)
+    .sort((a, b) => b.loves - a.loves)
     .slice(0, 3);
 
   return {
@@ -273,32 +283,5 @@ export function createDiningPlan(input: DiningInput): DiningPlan {
       person.notes ? [{ person: index + 1, text: person.notes }] : [],
     ),
     options,
-  };
-}
-
-export function tallyVotes(
-  options: readonly Cuisine[],
-  votes: readonly GroupVote[],
-): VoteSummary {
-  if (new Set(options).size !== options.length)
-    throw new Error("Shortlist options must be unique.");
-  if (votes.some((vote) => vote !== null && !options.includes(vote))) {
-    throw new Error("Votes must be for a shortlisted option.");
-  }
-
-  const totals = options.map((cuisine) => ({
-    cuisine,
-    votes: votes.filter((vote) => vote === cuisine).length,
-  }));
-  const votesCast = votes.filter((vote) => vote !== null).length;
-  const highest = Math.max(0, ...totals.map((total) => total.votes));
-  return {
-    totals,
-    votesCast,
-    leaders: highest
-      ? totals
-          .filter((total) => total.votes === highest)
-          .map((total) => total.cuisine)
-      : [],
   };
 }
