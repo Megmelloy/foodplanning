@@ -48,7 +48,37 @@
         <p>This is a small-group, single-device application, not a restaurant booking system. It does not currently have user accounts, a database, persisted plans, cross-device participation, outbound invitations, or verified restaurant listings.</p>
 
         <h2 id="2-system-overview-architectural-design">2. System Overview (Architectural Design)</h2>
-        <p>The application is a Next.js App Router project using React and TypeScript paired with a C# ASP.NET backend. The social-dining experience is implemented as a client-rendered page. Its domain calculations and validation are synchronous TypeScript functions; no application server request is made to build or vote on a social-dining plan. The separate meal-plan route runs on the server and can call the OpenAI Responses API only when explicitly enabled and configured.</p>
+        <p>Section 2 shows both the revised production design and the original diagram for the current prototype.</p>
+        <h3>Revised Diagram: Target Architecture</h3>
+        <p>In the proposed production design, the Next.js client sends HTTPS REST requests to Web Controllers in the ASP.NET Core API. The controllers call the lobby and account services, and the lobby service delegates venue ranking to the recommendation service.</p>
+        <pre class="mermaid">flowchart LR
+    subgraph Client["Client: Browser"]
+        UI["Next.js UI"]
+    end
+
+    subgraph Server["Server: ASP.NET Core Web API"]
+        Web["Web Controllers"]
+        Lobby["Lobby Service"]
+        Account["User Account Service"]
+        Rec["Recommendation Service"]
+
+        Web --&gt; Lobby
+        Web --&gt; Account
+        Lobby --&gt;|Request recommendations| Rec
+    end
+
+    subgraph External["External Services"]
+        AI["AI Provider: OpenAI Responses API"]
+        OAuth["OAuth 2.0 / OpenID Connect Provider"]
+        Maps["Google Maps"]
+    end
+
+    UI --&gt;|HTTPS REST| Web
+    Rec --&gt;|Rank candidate venues| AI
+    Account --&gt;|Verify sign-in identity| OAuth
+    UI --&gt;|Open selected venue link| Maps</pre>
+        <h3>Original Diagram: Current Prototype</h3>
+        <p>The implemented social-dining planner is a client-rendered Next.js page. Its domain calculations and validation are synchronous TypeScript functions; no application server request is made to build or vote on a social-dining plan. The separate meal-plan route runs on the server and can call the OpenAI Responses API only when explicitly enabled and configured.</p>
         <pre class="mermaid">flowchart LR
     Person[Organizer and participants]
     Browser[Web browser]
