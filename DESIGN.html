@@ -48,7 +48,7 @@
         <p>This is a small-group, single-device application, not a restaurant booking system. It does not currently have user accounts, a database, persisted plans, cross-device participation, outbound invitations, or verified restaurant listings.</p>
 
         <h2 id="2-system-overview-architectural-design">2. System Overview (Architectural Design)</h2>
-        <p>The application is a Next.js App Router project using React and TypeScript. The social-dining experience is implemented as a client-rendered page. Its domain calculations and validation are synchronous TypeScript functions; no application server request is made to build or vote on a social-dining plan. The separate meal-plan route runs on the server and can call the OpenAI Responses API only when explicitly enabled and configured.</p>
+        <p>The application is a Next.js App Router project using React and TypeScript paired with a C# ASP.NET backend. The social-dining experience is implemented as a client-rendered page. Its domain calculations and validation are synchronous TypeScript functions; no application server request is made to build or vote on a social-dining plan. The separate meal-plan route runs on the server and can call the OpenAI Responses API only when explicitly enabled and configured.</p>
         <pre class="mermaid">flowchart LR
     Person[Organizer and participants]
     Browser[Web browser]
@@ -88,23 +88,23 @@
               </tr>
               <tr>
                 <td>Organizer</td>
-                <td>Set the public area and schedule; manage the guest list on the device; review the summary; break vote ties; finalize the pick.</td>
+                <td>Set the public area and schedule; manage the guest list; review the summary; break vote ties; finalize the pick.</td>
               </tr>
               <tr>
                 <td>Participants</td>
-                <td>Enter cuisine preferences, price comfort, dietary needs, and optional notes; cast or change a vote on the shared device.</td>
+                <td>Enter cuisine preferences, price comfort, dietary needs, and optional notes; join lobbies and review recommendations.</td>
               </tr>
               <tr>
                 <td>Restaurant decision-makers (the group)</td>
                 <td>Need accurate current hours, prices, seating, and dietary information; the application does not verify these.</td>
               </tr>
               <tr>
-                <td>Google Maps</td>
-                <td>Receives search terms when a participant follows a Maps link.</td>
+                <td>Google Maps / Places</td>
+                <td>Receives venue search queries and search terms when a participant follows a Maps link.</td>
               </tr>
               <tr>
                 <td>OpenAI</td>
-                <td>Receives meal-planning input only if the legacy endpoint is deliberately enabled and called.</td>
+                <td>Receives aggregated group preferences and candidate venue shortlists for ranking.</td>
               </tr>
               <tr>
                 <td>Maintainers and reviewers</td>
@@ -127,7 +127,7 @@
             <tbody>
               <tr>
                 <td>Usability</td>
-                <td>A three-step, responsive flow separates scheduling, preferences, and voting. The page uses labeled controls, visible progress, inline errors, and vote totals. Participation is pass-the-device rather than remote.</td>
+                <td>A three-step, responsive flow separates scheduling, preferences, and voting. The page uses labeled controls, visible progress, inline errors, and vote totals.</td>
               </tr>
               <tr>
                 <td>Correctness</td>
@@ -135,414 +135,653 @@
               </tr>
               <tr>
                 <td>Privacy</td>
-                <td>Social-dining data stays in browser memory and is not sent to an application API. Names are not requested. Maps queries omit notes and dietary needs. Refreshing clears the state.</td>
+                <td>Individual taste profiles are kept private from other lobby members and only aggregated preferences are sent to the external LLM provider.</td>
               </tr>
               <tr>
                 <td>Security</td>
-                <td>The optional AI key is read from server environment variables, not browser code. The AI route validates request and response data, has an explicit enable switch, and times out provider calls. The route has no authentication, authorization, per-user rate limit, or abuse controls, so public AI deployment is not supported.</td>
+                <td>Invite and member tokens are hashed on the server, OAuth sessions use httpOnly cookies with CSRF protection, and external API keys remain in server-side environment configuration.</td>
               </tr>
               <tr>
                 <td>Maintainability</td>
-                <td>UI, social-dining rules, and legacy meal-plan validation are in separate files. TypeScript, ESLint, and Node's built-in test runner are configured.</td>
+                <td>Frontend UI, C# ASP.NET services, repository interfaces, and shared OpenAPI-generated TypeScript types are cleanly separated and covered by automated CI checks.</td>
               </tr>
               <tr>
                 <td>Performance</td>
-                <td>Social-dining calculations are local and operate on bounded small groups and fixed cuisine choices. The AI route uses a request timeout; no caching, database indexing, or load-scaling design is needed or implemented for the current application.</td>
+                <td>Venue searches are cached inside VenueProvider, deterministic filtering narrows candidates before LLM ranking, and active lobbies expire after 2.5 hours of inactivity.</td>
               </tr>
               <tr>
                 <td>Availability and resilience</td>
-                <td>The main planning flow does not depend on the AI provider. Maps navigation and AI generation do depend on external services when used; service failures are surfaced to the user. There is no persistent recovery after refresh.</td>
+                <td>External calls use timeouts and retries with backoff. If LLM ranking fails or times out, RecommendationService automatically falls back to DeterministicRanker.</td>
               </tr>
               <tr>
                 <td>Interoperability</td>
-                <td>The planner opens Google Maps URLs and exports an <code>.ics</code> calendar event. The legacy endpoint exchanges JSON with OpenAI's Responses API.</td>
+                <td>The system integrates with OAuth 2.0 identity providers, Google Places API, OpenAI Responses API, Google Maps URLs, and RFC 5545 <code>.ics</code> calendar exports.</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <h2 id="5-detailed-component-designs-detailed-design">5. Detailed Component Designs (Detailed Design)</h2>
-        <h3 id="5-1-social-dining-planner-interface">5.1 Social-Dining Planner Interface</h3>
+
+        <h3 id="5-1-lobby-service">5.1 Lobby Service</h3>
         <h4 id="5-1-1-overview">5.1.1 Overview</h4>
-        <p>The planner is the <code>Home</code> client component in <code>src/app/page.tsx</code>. It presents three steps:</p>
-        <ol>
-          <li><strong>Where &amp; when:</strong> public area and a future date/time, from now through 365 days ahead.</li>
-          <li><strong>Tastes:</strong> 2–15 numbered participants (the organizer is Person 1), cuisine preferences, budget, dietary needs, and optional notes. The organizer alone can add or remove guests in this shared-device session.</li>
-          <li><strong>Vote:</strong> up to three cuisine searches, one optional vote per participant, an organizer tie-break when needed, and final-pick/calendar actions.</li>
-        </ol>
-        <p>The planner owns transient form, plan, vote, error, and selection state. It delegates validation, ranking, tallying, schedule formatting, and calendar generation to <code>src/lib/social-dining.ts</code>.</p>
+        <p>Stateful service that creates temporary lobbies which track present users. A user client joins a lobby with a pre-signed invite link. Server sees this, checks which lobby that link is for, then adds the client to a lobby, giving them a token representing their status as a member of that lobby.</p>
+        <p>A client can join anonymously, being prompted for a name to represent the client user in the lobby for others, or can join using an existing user account. If an account is used, the server automatically uses existing saved user data where possible. Any user can create a lobby, becoming the lobby's Organizer. They can kick other participants, create invite links, and start the recommendation phase. A lobby will time out after 2.5 hours of inactivity, removing all state for that specific lobby from the server.</p>
+        <p>Taste profiles and organizer-specified location data are gathered. On action from the organizer to start analyzing, participant data is sent to Recommendation Service. The returned venues are then presented to all participants.</p>
 
         <h4 id="5-1-2-design-considerations">5.1.2 Design Considerations</h4>
         <ul>
-          <li>The interface does not collect names or send invitations; guest labels are person numbers on the current device.</li>
-          <li>Editing the location, schedule, or preferences invalidates the previously generated plan and votes so stale results cannot be finalized.</li>
-          <li>An omitted cuisine preference means “Open.” Any participant's “Skip” excludes a cuisine. The lowest price range selected by anyone informs Maps search wording.</li>
-          <li>Dietary needs and notes are reminders for the group to confirm, not filters against verified menus. Search results are not guaranteed to match budget, opening hours, distance, accessibility, or group seating.</li>
-          <li>Schedule values are interpreted in the browser's local time zone.</li>
-          <li>With no favorites, the fixed cuisine order provides exploration ideas. If all cuisines are skipped, the shortlist is empty and voting is unavailable.</li>
-          <li>A finalized choice identifies a cuisine search, not a confirmed venue.</li>
+          <li>Lobby state stored serverside via in-memory key-value store (<code>IMemoryCache</code>). <code>IMemoryCache</code> only works with a single service instance, and a restart/deploy clears lobbies. Can use Redis in future if significant scaling is needed.</li>
+          <li>Members use polling to be updated on lobby state.</li>
+          <li>Changes to each lobby are serialized by per-lobby <code>SemaphoreSlim</code>; a version number is kept for change detection when polling.</li>
+          <li>2 token types: invite and member. Organizer actions validate via checking role assigned to the member token.</li>
+          <li>Fixed stages that reject out-of-order actions: <code>Open</code> &gt; <code>Recommending</code> &gt; <code>Voting</code> &gt; <code>Finalized</code>; new stages can be implemented in future as needed.</li>
+          <li>Search area set by Organizer.</li>
         </ul>
 
         <h4 id="5-1-3-class-diagram">5.1.3 Class Diagram</h4>
-        <p>The implementation uses TypeScript data types and pure functions rather than object-oriented classes. This diagram documents the domain types and the relationships used by the component; it does not imply runtime class instances.</p>
         <pre class="mermaid">classDiagram
-    class DiningInput {
-      +area: string
-      +schedule: DiningSchedule
-      +participants: DiningParticipant[]
+    class LobbyService {
+      +createLobby(name, area, dinnerTime, accountId)
+      +createInvite(memberToken)
+      +join(inviteToken, nameOrAccountId)
+      +kick(memberToken, memberId)
+      +submitProfile(memberToken, profile)
+      +startRecommendation(memberToken)
+      +finalize(memberToken, venueId)
+      +getLobbyView(memberToken)
     }
-    class DiningSchedule {
-      +date: string
-      +time: string
+    class Lobby {
+      +id: string
+      +status: LobbyStatus
+      +area: SearchArea
+      +dinnerTime: string
+      +members: Member[]
+      +invites: Invite[]
+      +shortlist: RankedVenue[]
+      +finalVenueId: string
+      +lastActivityAt: string
+      +version: number
+      +addMember()
+      +removeMember()
+      +canStart()
     }
-    class DiningParticipant {
-      +liked: Cuisine[]
-      +avoided: Cuisine[]
-      +dietaryNeeds: DietaryNeed[]
-      +budget: Budget
-      +notes: string
+    class Member {
+      +id: string
+      +displayName: string
+      +role: string
+      +tokenHash: string
+      +profile: TasteProfile
+      +accountId: string
     }
-    class DiningPlan {
-      +area: string
-      +schedule: DiningSchedule
-      +groupSize: number
-      +budget: Budget
-      +dietaryNeeds: DietaryNeed[]
-      +notes: PersonNote[]
-      +options: DiningOption[]
+    class Invite {
+      +tokenHash: string
+      +expiresAt: string
+      +revoked: boolean
     }
-    class DiningOption {
-      +cuisine: Cuisine
-      +votes: number
-      +mapsUrl: string
-    }
-    class GroupVote {
-      +Cuisine or null
-    }
-    class VoteSummary {
-      +totals: CuisineVote[]
-      +votesCast: number
-      +leaders: Cuisine[]
+    class LobbyRepository {
+      &lt;&lt;interface&gt;&gt;
+      +get(id)
+      +findByInviteHash(hash)
+      +UpdateAsync(id, updateFn)
+      +delete(id)
     }
 
-    DiningInput *-- DiningSchedule
-    DiningInput &quot;1&quot; o-- &quot;2..15&quot; DiningParticipant
-    DiningPlan *-- DiningSchedule
-    DiningPlan &quot;1&quot; o-- &quot;0..3&quot; DiningOption
-    DiningPlan ..&gt; VoteSummary : tallyVotes
-    DiningOption ..&gt; GroupVote : vote choice</pre>
+    LobbyService --&gt; LobbyRepository
+    Lobby &quot;1&quot; *-- &quot;1..15&quot; Member
+    Lobby &quot;1&quot; *-- &quot;0..*&quot; Invite</pre>
 
         <h4 id="5-1-4-sequence-diagrams">5.1.4 Sequence Diagrams</h4>
-        <p><strong>Planning and voting (all state remains in the browser):</strong></p>
         <pre class="mermaid">sequenceDiagram
     actor Organizer
-    actor GroupMember
-    participant UI as Planner UI
-    participant Rules as social-dining.ts
-    Organizer-&gt;&gt;UI: Enter area and future schedule
-    UI-&gt;&gt;Rules: parseSchedule(date, time)
-    Rules--&gt;&gt;UI: Valid schedule or null
-    loop Each participant
-        GroupMember-&gt;&gt;UI: Set likes, skips, budget, needs, notes
-    end
-    Organizer-&gt;&gt;UI: Build shortlist
-    UI-&gt;&gt;Rules: parseDiningInput(group)
-    Rules--&gt;&gt;UI: Validated input or null
-    UI-&gt;&gt;Rules: createDiningPlan(input)
-    Rules--&gt;&gt;UI: Up to three cuisine options and Maps URLs
-    loop Each participant
-        GroupMember-&gt;&gt;UI: Cast or change vote
-        UI-&gt;&gt;Rules: tallyVotes(options, votes)
-        Rules--&gt;&gt;UI: Totals and leader(s)
-    end
-    opt Tied leading cuisines
-        Organizer-&gt;&gt;UI: Choose tie-break
-    end
-    Organizer-&gt;&gt;UI: Lock in pick
-    UI-&gt;&gt;Rules: createCalendarEvent(plan, cuisine)
-    Rules--&gt;&gt;UI: Local-time two-hour .ics content
-    UI--&gt;&gt;Organizer: Download calendar event / open Maps link</pre>
+    actor Guest
+    participant Svc as LobbyService
+    participant Repo as LobbyRepository
+    participant Rec as RecommendationService
 
-        <h3 id="5-2-social-dining-domain-logic">5.2 Social-Dining Domain Logic</h3>
+    Organizer-&gt;&gt;Svc: createLobby(name, area, dinnerTime)
+    Svc-&gt;&gt;Repo: Save new Lobby
+    Svc--&gt;&gt;Organizer: Organizer memberToken
+    Organizer-&gt;&gt;Svc: createInvite(memberToken)
+    Svc--&gt;&gt;Organizer: Invite link
+    Guest-&gt;&gt;Svc: join(inviteToken, nameOrAccountId)
+    Svc-&gt;&gt;Repo: findByInviteHash &amp; addMember
+    Svc--&gt;&gt;Guest: Guest memberToken
+    Organizer-&gt;&gt;Svc: startRecommendation(memberToken)
+    Svc-&gt;&gt;Rec: recommend(profiles, area, dinnerTime)
+    Rec--&gt;&gt;Svc: RankedVenue shortlist
+    Svc-&gt;&gt;Repo: Store shortlist under lock
+    Organizer-&gt;&gt;Svc: finalize(memberToken, venueId)</pre>
+
+        <h3 id="5-2-taste-profiles">5.2 Taste Profiles</h3>
         <h4 id="5-2-1-overview">5.2.1 Overview</h4>
-        <p><code>src/lib/social-dining.ts</code> defines the dining types and fixed choices, input parsing, schedule validation/formatting, invitation limits, shortlist generation, vote tallying, and iCalendar text creation. It has no network or database dependency.</p>
-        <h4 id="5-2-2-design-considerations">5.2.2 Design Considerations</h4>
-        <p>The domain layer validates finite lists and bounds (2–15 participants, 120 characters for the area, 300 for notes, valid cuisine/dietary selections, and a future schedule no more than 365 days away). A person's liked and avoided cuisines cannot overlap. Shortlist generation excludes cuisines skipped by anyone, ranks remaining cuisines by number of likes, resolves equal ranking by the fixed cuisine order, and takes at most three. Vote tallying rejects duplicate options and votes outside the shortlist. Calendar values escape special text characters and represent a two-hour event in local time.</p>
-        <h4 id="5-2-3-class-diagram">5.2.3 Class Diagram</h4>
-        <p>The types and main operations are shown in section 5.1.3. The domain functions are exported operations, not class methods.</p>
-        <h4 id="5-2-4-sequence-diagrams">5.2.4 Sequence Diagrams</h4>
-        <p>Section 5.1.4 shows the domain calls within the complete client-side flow. The domain has no independent external-system sequence.</p>
+        <p>Important data structure that represents the compiled preferences and restrictions of an individual user to be used by the recommendation service. Not tied with user accounts: while a user account can have an associated taste profile, a taste profile does not require a user account. A taste profile, once constructed, can be saved to a user account to be reused later.</p>
+        <p>A taste profile is constructed via asking the user to choose “Love”, “Ok”, or “Skip” on a series of types of cuisines (e.g. Italian, Chinese, American) and can be updated to include any other notable traits that can be discerned in venue data available via public APIs, price preferences, then submit any dietary restrictions.</p>
 
-        <h3 id="5-3-legacy-ai-meal-plan-api">5.3 Legacy AI Meal-Plan API</h3>
+        <h4 id="5-2-2-design-considerations">5.2.2 Design Considerations</h4>
+        <ul>
+          <li>Shared data model across client and server. TypeScript types are generated from ASP.NET API description.</li>
+          <li>Versioned JSON to allow loading saved profiles after updates to schema.</li>
+          <li>Distinction between hard limits (dietary restrictions, max price, skip) and preferences.</li>
+          <li>Passed via snapshots: updating a saved taste profile does not automatically change the copy of that taste profile already present in a lobby.</li>
+          <li>Information kept private from other users; only used in recommendation service.</li>
+        </ul>
+
+        <h4 id="5-2-3-class-diagram">5.2.3 Class Diagram</h4>
+        <pre class="mermaid">classDiagram
+    class TasteProfile {
+      +schemaVersion: number
+      +cuisineRatings: Map~cuisineId, Rating~
+      +maxPrice: PriceLevel
+      +dietaryRestrictions: DietaryRestriction[]
+      +notes: string
+      +validate()
+      +isComplete()
+      +toJSON()
+      +fromJSON()
+    }
+    class Cuisine {
+      +id: string
+      +label: string
+      +providerCategories: string[]
+    }
+
+    TasteProfile --&gt; Cuisine : rates</pre>
+
+        <h4 id="5-2-4-sequence-diagrams">5.2.4 Sequence Diagrams</h4>
+        <pre class="mermaid">sequenceDiagram
+    actor User
+    participant UI as Next.js Client UI
+    participant Lobby as LobbyService
+    participant Acct as UserAccountService
+
+    User-&gt;&gt;UI: Rate cuisines, set maxPrice &amp; dietaryRestrictions
+    UI-&gt;&gt;UI: validate()
+    UI-&gt;&gt;Lobby: submitProfile(memberToken, profile)
+    Lobby-&gt;&gt;Lobby: Validate &amp; store snapshot
+    Lobby--&gt;&gt;UI: Roster shows member as ready
+    opt Signed-in user saves profile
+        UI-&gt;&gt;Acct: saveProfile(accountId, profile, label)
+    end</pre>
+
+        <h3 id="5-3-recommendation-service">5.3 Recommendation Service</h3>
         <h4 id="5-3-1-overview">5.3.1 Overview</h4>
-        <p><code>POST /api/meal-plan</code> is a server-side compatibility endpoint implemented in <code>src/app/api/meal-plan/route.ts</code>. It accepts a bounded JSON meal-planning request, validates it through <code>src/lib/meal-plan.ts</code>, conditionally calls OpenAI's Responses API, validates the generated plan, and returns JSON. It is not invoked by the current social-dining page.</p>
+        <p>Provided with taste profiles and location data/preferences (location &amp; max distance from location). Gets venues in the area, eliminates any that don't match with taste profiles. Sends subsequent shortlist of venues along with combined preferences and restrictions from all member taste profiles and any other relevant data to external LLM provider along with appropriate instruction to create a final ranked shortlist. Returns the resulting chosen venues, ranked.</p>
+
         <h4 id="5-3-2-design-considerations">5.3.2 Design Considerations</h4>
         <ul>
-          <li>The endpoint is disabled unless <code>ENABLE_AI_PLANNING=true</code> and a server-side <code>OPENAI_API_KEY</code> are configured. <code>OPENAI_MODEL</code> is optional.</li>
-          <li>Requests are limited to 4,000 characters; individual and group preference formats have additional bounds. Plans must contain the requested sequential number of meals (1–7 days), with serving counts from 1–8.</li>
-          <li>Group requests can contain 2–8 anonymous preference profiles. The server combines them and labels them by person number.</li>
-          <li>Provider calls have a 45-second timeout, request <code>store: false</code>, and cap generated output tokens. Provider output is parsed and validated before it is returned.</li>
-          <li>AI output can be inaccurate. It is not authoritative allergen, nutrition, medical, or food-safety advice.</li>
-          <li>The route does not implement authentication, authorization, per-user rate limits, abuse prevention, or spending controls. The enable flag is a deployment switch, not access control. Keep the route disabled on public deployments until these controls exist.</li>
+          <li>Stateless. Uses exclusively the data passed to it on a call.</li>
+          <li>Minimize costly API calls where necessary via internal rate limiting and caching. Caching belongs to <code>VenueProvider</code>, allowing <code>RecommendationService</code> to stay stateless.</li>
+          <li>LLM's role should be minimized: as much of the recommendation work as possible should be done algorithmically before sending the resulting shortlist to an LLM to rank.</li>
+          <li>Require schema-matching JSON output from LLM and validate data (only accept venue IDs present in the list it was given). Limit token usage and wait time.</li>
+          <li>Only send combined preferences to LLM, not individual profiles.</li>
+          <li>When nothing matches, report the restriction that ruled out the most venues to report back to end users.</li>
         </ul>
+
         <h4 id="5-3-3-class-diagram">5.3.3 Class Diagram</h4>
-        <p>The endpoint exchanges the <code>PlanningInput</code> and <code>MealPlan</code> TypeScript types. <code>mealPlanSchema</code> constrains the requested structured output; <code>parseMealPlan</code> validates the returned value. These are functions and data types rather than classes.</p>
         <pre class="mermaid">classDiagram
-    class PlanningInput {
-      +days: number
-      +servings: number
-      +preferences: string
+    class RecommendationService {
+      +recommend(request)
+      -filter(venues, prefs)
     }
-    class MealPlan {
-      +meals: Meal[]
-      +groceryList: string[]
+    class GroupPreferences {
+      +excludedCuisines: string[]
+      +cuisineScores: Map
+      +dietaryRestrictions: string[]
+      +priceCeiling: number
+      +fromProfiles(profiles)
     }
-    class Meal {
-      +day: number
-      +name: string
-      +instructions: string
-      +ingredients: string[]
+    class VenueProvider {
+      &lt;&lt;interface&gt;&gt;
+      +search(area, categories)
     }
-    PlanningInput ..&gt; MealPlan : generation request
-    MealPlan *-- Meal</pre>
+    class VenueRanker {
+      &lt;&lt;interface&gt;&gt;
+      +rank(venues, prefs)
+    }
+    class DeterministicRanker {
+      +rank(venues, prefs)
+    }
+    class LlmRanker {
+      +rank(venues, prefs)
+    }
+    class LlmClient {
+      +complete(prompt, schema, timeoutMs)
+    }
+    class RankedVenue {
+      +venue: Venue
+      +score: number
+      +reason: string
+    }
+
+    RecommendationService --&gt; VenueProvider
+    RecommendationService --&gt; VenueRanker
+    RecommendationService --&gt; GroupPreferences
+    LlmRanker ..|&gt; VenueRanker
+    DeterministicRanker ..|&gt; VenueRanker
+    LlmRanker --&gt; LlmClient
+    LlmRanker --&gt; DeterministicRanker : fallback</pre>
 
         <h4 id="5-3-4-sequence-diagrams">5.3.4 Sequence Diagrams</h4>
         <pre class="mermaid">sequenceDiagram
-    actor Caller
-    participant Route as /api/meal-plan
-    participant Parser as meal-plan.ts
-    participant Provider as OpenAI Responses API
-    Caller-&gt;&gt;Route: POST JSON
-    Route-&gt;&gt;Parser: parsePlanningInput(body)
-    Parser--&gt;&gt;Route: Valid input or null
-    alt Invalid request
-        Route--&gt;&gt;Caller: 400 or 413 error JSON
-    else Disabled or missing server key
-        Route--&gt;&gt;Caller: 503 error JSON
-    else Enabled and configured
-        Route-&gt;&gt;Provider: Request structured plan (45s timeout)
-        Provider--&gt;&gt;Route: Response
-        Route-&gt;&gt;Parser: parseMealPlan(output, requested days)
-        Parser--&gt;&gt;Route: Valid plan or null
-        Route--&gt;&gt;Caller: Plan JSON or 502/504 error JSON
+    participant Lobby as LobbyService
+    participant Rec as RecommendationService
+    participant Prov as VenueProvider
+    participant Det as DeterministicRanker
+    participant LLM as LlmRanker / LlmClient
+
+    Lobby-&gt;&gt;Rec: recommend(request)
+    Rec-&gt;&gt;Rec: GroupPreferences.fromProfiles(profiles)
+    Rec-&gt;&gt;Prov: search(area, categories)
+    Prov--&gt;&gt;Rec: Candidate venues
+    Rec-&gt;&gt;Rec: filter(venues, prefs)
+    alt No venues remain
+        Rec--&gt;&gt;Lobby: emptyReason
+    else Candidates remain
+        Rec-&gt;&gt;Det: Keep top ~10 candidates
+        Rec-&gt;&gt;LLM: Rank candidates with schema validation
+        alt LLM valid JSON &amp; valid venue IDs
+            LLM--&gt;&gt;Rec: Ranked top 3 venues
+        else LLM timeout or invalid output
+            Det--&gt;&gt;Rec: Deterministic top 3 fallback
+        end
+        Rec--&gt;&gt;Lobby: RecommendationResult
     end</pre>
 
+        <h3 id="5-4-user-account-service">5.4 User Account Service</h3>
+        <h4 id="5-4-1-overview">5.4.1 Overview</h4>
+        <p>Allows users to create accounts on the app, saving basic user information, preferences, and taste profiles. Optional — users do not need an account to access core functionality; serves as a quality of life feature for repeat users. Authentication is handled via external OAuth providers to reduce security and database requirements.</p>
+
+        <h4 id="5-4-2-design-considerations">5.4.2 Design Considerations</h4>
+        <ul>
+          <li>Optional everywhere: every flow must work without an account.</li>
+          <li>No passwords stored in DB — validation handled via external OAuth providers.</li>
+          <li>Sessions kept in secure <code>httpOnly</code> cookies with CSRF protections on routes that change data.</li>
+          <li>Deleting an account also deletes all saved taste profiles.</li>
+        </ul>
+
+        <h4 id="5-4-3-class-diagram">5.4.3 Class Diagram</h4>
+        <pre class="mermaid">classDiagram
+    class UserAccountService {
+      +getOrCreateFromIdentity(provider, subject, email, name)
+      +getAccount(id)
+      +saveProfile(accountId, profile, label)
+      +listProfiles(accountId)
+      +deleteAccount(accountId)
+    }
+    class UserAccount {
+      +id: string
+      +displayName: string
+      +email: string
+      +authProvider: string
+      +providerSubject: string
+      +createdAt: string
+    }
+    class SavedTasteProfile {
+      +id: string
+      +accountId: string
+      +label: string
+      +profile: TasteProfile
+      +updatedAt: string
+    }
+    class AccountRepository {
+      &lt;&lt;interface&gt;&gt;
+      +create()
+      +read()
+      +update()
+      +delete()
+    }
+
+    UserAccountService --&gt; AccountRepository
+    UserAccount &quot;1&quot; *-- &quot;0..*&quot; SavedTasteProfile</pre>
+
+        <h4 id="5-4-4-sequence-diagrams">5.4.4 Sequence Diagrams</h4>
+        <pre class="mermaid">sequenceDiagram
+    actor User
+    participant UI as Next.js Client UI
+    participant OAuth as OAuth Identity Provider
+    participant Acct as UserAccountService
+
+    User-&gt;&gt;UI: Click Sign In
+    UI-&gt;&gt;OAuth: Redirect to Identity Provider
+    OAuth--&gt;&gt;Acct: OIDC callback with identity
+    Acct-&gt;&gt;Acct: getOrCreateFromIdentity()
+    Acct--&gt;&gt;UI: Set Secure httpOnly session cookie
+    User-&gt;&gt;UI: Delete Account
+    UI-&gt;&gt;Acct: deleteAccount(accountId)
+    Acct--&gt;&gt;UI: Saved profiles deleted &amp; session ended</pre>
+
+        <h3 id="5-5-user-interface">5.5 User Interface</h3>
+        <h4 id="5-5-1-overview">5.5.1 Overview</h4>
+        <p>TypeScript Next.js web app deployed to a user's internet browser, device-agnostic. Interfaces with the rest of the app via HTTP REST. Used to construct a user's Taste Profile, show lobby participants (and allow the Organizer to manage it), and to present recommended venues.</p>
+
+        <h4 id="5-5-2-design-considerations">5.5.2 Design Considerations</h4>
+        <ul>
+          <li>One flow for both Organizer and Participant in lobby; organizer just gets extra controls added.</li>
+          <li><code>LocationPicker</code> component is only for Organizers.</li>
+          <li>Survives refreshing the page on a browser — member token kept in browser storage.</li>
+          <li>Location gathered via browser's location by default, allowing user to override by specifying a given location.</li>
+          <li>Errors shown inline next to fields.</li>
+        </ul>
+
+        <h4 id="5-5-3-class-diagram">5.5.3 Class Diagram</h4>
+        <pre class="mermaid">classDiagram
+    class LobbyPage {
+      +useLobby(lobbyId)
+    }
+    class ApiClient {
+      +createLobby()
+      +createInvite()
+      +join()
+      +kick()
+      +submitProfile()
+      +startRecommendation()
+      +finalize()
+      +getLobby()
+    }
+    class ClientSession {
+      +lobbyId: string
+      +memberToken: string
+      +role: string
+    }
+    class ApiError {
+      +code: string
+      +message: string
+      +requestId: string
+    }
+
+    LobbyPage --&gt; ApiClient
+    LobbyPage --&gt; ClientSession
+    ApiClient --&gt; ApiError</pre>
+
+        <h4 id="5-5-4-sequence-diagrams">5.5.4 Sequence Diagrams</h4>
+        <pre class="mermaid">sequenceDiagram
+    actor Organizer
+    actor Guest
+    participant UI as Next.js Pages &amp; useLobby
+    participant API as ApiClient / ASP.NET API
+
+    Organizer-&gt;&gt;UI: HomePage -&gt; LocationPicker (Geolocation or ZIP)
+    UI-&gt;&gt;API: createLobby() &amp; createInvite()
+    API--&gt;&gt;UI: Store ClientSession &amp; copy invite link
+    Guest-&gt;&gt;UI: Open JoinPage (/join/[token])
+    UI-&gt;&gt;API: join() &amp; submitProfile()
+    loop Live Lobby Polling
+        UI-&gt;&gt;API: useLobby polls getLobbyView()
+        API--&gt;&gt;UI: Updated roster, status, and shortlist
+    end
+    Organizer-&gt;&gt;UI: ShortlistView -&gt; finalize(venueId)
+    UI--&gt;&gt;Organizer: Display final venue, Maps link &amp; .ics download</pre>
+
         <h2 id="6-data-model-detailed-design">6. Data Model (Detailed Design)</h2>
-        <p>There is no database or durable application data model. The following relationships describe transient browser state and request/response payloads. Refreshing or closing the page loses social-dining state.</p>
+        <p>The system separates durable relational user account storage in PostgreSQL from ephemeral, versioned lobby state in <code>IMemoryCache</code> / Redis. Passwords are never stored; authentication relies exclusively on external OAuth provider subjects.</p>
         <pre class="mermaid">erDiagram
-    DINING_SESSION ||--|{ PARTICIPANT : contains
-    DINING_SESSION ||--o| DINING_PLAN : creates
-    DINING_PLAN ||--o{ CUISINE_OPTION : lists
-    PARTICIPANT ||--o| VOTE : casts
-    CUISINE_OPTION ||--o{ VOTE : receives
-    DINING_SESSION {
-      string area
-      string date
-      string time
-      number groupSize
+    USER_ACCOUNT ||--o{ SAVED_TASTE_PROFILE : stores
+    USER_ACCOUNT ||--o{ LOBBY_MEMBER : optional_link
+    LOBBY ||--|{ LOBBY_MEMBER : contains
+    LOBBY ||--o{ LOBBY_INVITE : issues
+    LOBBY ||--o{ RANKED_VENUE : recommends
+    LOBBY_MEMBER ||--o| TASTE_PROFILE_SNAPSHOT : submits
+
+    USER_ACCOUNT {
+      string id
+      string displayName
+      string email
+      string authProvider
+      string providerSubject
+      string createdAt
     }
-    PARTICIPANT {
-      number personNumber
-      string likedCuisines
-      string skippedCuisines
-      string dietaryNeeds
-      string budget
-      string optionalNotes
+    SAVED_TASTE_PROFILE {
+      string id
+      string accountId
+      string label
+      json profileJson
+      string updatedAt
     }
-    DINING_PLAN {
-      string lowestGroupBudget
-      string combinedDietaryNeeds
-      string options
+    LOBBY {
+      string id
+      string status
+      json searchArea
+      string dinnerTime
+      string finalVenueId
+      string lastActivityAt
+      number version
     }
-    CUISINE_OPTION {
-      string cuisine
-      number likeCount
+    LOBBY_MEMBER {
+      string id
+      string displayName
+      string role
+      string tokenHash
+      string accountId
+    }
+    LOBBY_INVITE {
+      string tokenHash
+      string expiresAt
+      boolean revoked
+    }
+    TASTE_PROFILE_SNAPSHOT {
+      number schemaVersion
+      json cuisineRatings
+      number maxPrice
+      json dietaryRestrictions
+      string notes
+    }
+    RANKED_VENUE {
+      string venueId
+      string name
+      number distanceMeters
+      number priceLevel
+      number score
+      string reason
       string mapsUrl
-    }
-    VOTE {
-      number personNumber
-      string cuisineOrNoVote
     }</pre>
-        <p><strong>Social-dining constraints:</strong> A group contains 2–15 participants; each participant has a budget of <code>$</code>, <code>$$</code>, or <code>$$$</code>, unique valid liked/avoided cuisines, a finite set of dietary needs, and at most 300 characters of notes. An omitted vote is allowed. A submitted vote must select one of the generated options. The group summary unions dietary needs and keeps notes associated with person numbers.</p>
-        <p>The legacy API has a separate payload: <code>PlanningInput</code> contains <code>days</code>, <code>servings</code>, and combined <code>preferences</code>; <code>MealPlan</code> contains one sequentially numbered meal per requested day and a grocery list. The legacy plan is held by the caller and is not saved by this application.</p>
 
         <h2 id="7-user-interface-design-detailed-design">7. User Interface Design (Detailed Design)</h2>
-        <p>The responsive single-page interface uses a three-step progress control and a two-column desktop layout with a group snapshot beside the active step. On narrow screens, content stacks vertically.</p>
-        <pre><code class="language-text">+----------------------------------------------------+
-| Table Sync                             Small group |
-+----------------------------------------------------+
-| Dinner, decided together.                          |
-| [Where &amp; when]       [Tastes]          [Vote]      |
-+------------------------------------+---------------+
-| Current step form/result           | Group snapshot|
-|                                    | Area and time |
-|                                    | Size and budget|
-|                                    | Needs and notes|
-+------------------------------------+---------------+</code></pre>
-        <p>The visual system uses a warm cream background, dark ink text, tomato and herb accents, rounded cards, and large display headings. Inputs are labeled, related choices use fieldsets, current errors use alert semantics, and keyboard focus is visibly outlined. Vote totals and the selected event are presented in the page. Dietary needs and notes are explicitly presented as information to confirm, not verified filters.</p>
+        <p>The interface adapts dynamically based on the participant's role in the lobby session:</p>
+        <ul>
+          <li><strong>Host (Organizer) View:</strong>
+            <ol>
+              <li>Create a session utilizing HTML5 Geolocation with manual ZIP/postal code fallback.</li>
+              <li>Generate and copy pre-signed invite links and manage the lobby roster.</li>
+              <li>Input cuisine preferences (Love, Ok, or Skip), maximum price comfort, and hard dietary restrictions.</li>
+              <li>Trigger recommendation analysis, review the interactive ranked venue shortlist, and lock in the final venue choice.</li>
+            </ol>
+          </li>
+          <li><strong>Guest (Participant) View:</strong>
+            <ol>
+              <li>Join session via `/join/[token]` anonymously with a display name or via OAuth sign-in (with saved profile pre-fill).</li>
+              <li>Input cuisine preferences (Love, Ok, or Skip), maximum price comfort, and hard dietary restrictions.</li>
+              <li>Review the live lobby roster, ranked venue shortlist, finalized venue link, and `.ics` calendar export.</li>
+            </ol>
+          </li>
+        </ul>
 
         <h2 id="8-error-handling-and-exception-management-detailed-design">8. Error Handling and Exception Management (Detailed Design)</h2>
-        <p>The social-dining UI validates area and schedule before advancing and reports invalid group input inline. The domain parsers return <code>null</code> for invalid untrusted input; domain invariants that should already be guaranteed by validated state (for example, an invalid internal budget or vote) throw an error. User edits clear prior plans and votes rather than retaining stale results.</p>
-        <p>The legacy API returns JSON error messages with these HTTP statuses:</p>
+        <p>The server returns consistent <code>ApiError</code> objects containing a safe user message, machine-readable <code>code</code>, and <code>requestId</code>. Validation errors identify fields inline without exposing internal server details. Expected error cases include expired or invalid invite links, incomplete profiles, out-of-order stage actions, no eligible restaurants, provider rate limits, provider timeouts, and invalid AI output.</p>
+        <p>External calls use strict timeouts and limited retries with backoff. If LLM text generation or ranking fails, <code>RecommendationService</code> gracefully falls back to <code>DeterministicRanker</code> scores without disrupting the user interface. If no restaurant satisfies all hard constraints, the application reports the specific restriction that ruled out the most venues (for example, <em>“No restaurants within 5 miles support both Vegan and Nut-Free requirements. Please expand the search radius or adjust restrictions.”</em>) rather than failing generically.</p>
+
+        <h2 id="9-security-design-detailed-design">9. Security Design (Detailed Design)</h2>
+        <ul>
+          <li>Invite and member tokens are cryptographically random, difficult to guess, stored as SHA-256 hashes (<code>tokenHash</code>) on the server, and expire automatically.</li>
+          <li>Organizer-only actions (creating invites, kicking members, starting recommendations, finalizing a venue) validate the organizer role assigned to the caller's <code>memberToken</code>.</li>
+          <li>Accounts are optional, and guests can join a lobby without one. Repeat-user authentication is delegated to external OAuth 2.0 providers so no passwords are stored in the database. Sessions are kept in <code>Secure</code>, <code>httpOnly</code> cookies with CSRF protections on state-changing routes.</li>
+          <li>Every API route validates input schemas and verifies that referenced records belong to the same lobby or account. Public endpoints are rate-limited and protected against automated abuse.</li>
+          <li>All traffic uses HTTPS; secrets remain in environment-managed server configuration, and database access uses least-privilege credentials.</li>
+          <li>Structured server logs avoid dietary details, raw invite/member tokens, and unnecessary personal information. Stored data is minimized: lobbies expire after 2.5 hours of inactivity and are purged, and deleting an account cascades deletion to all saved taste profiles.</li>
+        </ul>
+
+        <h2 id="10-performance-optimization-detailed-design">10. Performance Optimization (Detailed Design)</h2>
+        <p>Active lobby state is held in fast server-side memory (<code>IMemoryCache</code>, with Redis support via <code>LobbyRepository</code>) and uses lightweight version numbers so polling clients only process state deltas. Per-lobby concurrency is serialized via fine-grained <code>SemaphoreSlim</code> locks, and the lock is released while external recommendation calls execute so lobby polling is never blocked.</p>
+        <p>To minimize latency and external API costs, <code>VenueProvider</code> caches upstream venue search results by area and category. <code>RecommendationService</code> performs deterministic filtering and scoring in memory first, sending at most ~10 candidate venues and aggregated group preferences to the LLM with bounded token limits and a strict timeout.</p>
+
+        <h2 id="11-deployment-architecture-detailed-design">11. Deployment Architecture (Detailed Design)</h2>
+        <p>The Table Sync production architecture follows a decoupled, cloud-hosted multi-tier topology separating the device-agnostic <strong>Next.js TypeScript web client</strong> from the stateful <strong>C# ASP.NET Core Web API</strong> backend, backing data stores, and external service providers.</p>
+        <pre class="mermaid">flowchart TB
+    Browser[Client Web Browser&lt;br/&gt;Desktop &amp; Mobile, Geolocation, Storage]
+    Calendar[Local Calendar App&lt;br/&gt;.ics Event Download]
+    NextApp[Next.js TypeScript Frontend&lt;br/&gt;HomePage, JoinPage, LobbyPage, AccountPage]
+    Gateway[C# ASP.NET Core Web API&lt;br/&gt;HTTPS REST, Rate Limiting, Auth &amp; CSRF]
+    LobbySvc[LobbyService&lt;br/&gt;SemaphoreSlim Locks &amp; 2.5h Inactivity TTL]
+    RecSvc[RecommendationService&lt;br/&gt;DeterministicRanker &amp; LlmRanker]
+    AcctSvc[UserAccountService&lt;br/&gt;OAuth Identity &amp; Saved Profiles]
+    MemCache[IMemoryCache / Redis Store&lt;br/&gt;Versioned Lobby State &amp; Venue Cache]
+    Postgres[PostgreSQL Database&lt;br/&gt;UserAccounts &amp; SavedTasteProfiles]
+    OAuth[External OAuth 2.0 Providers]
+    Places[VenueProvider API&lt;br/&gt;Google Places API]
+    LLM[External LLM Provider&lt;br/&gt;OpenAI Structured JSON API]
+    Maps[Google Maps Web]
+
+    Browser --&gt;|HTTPS Page Load| NextApp
+    Browser --&gt;|HTTPS REST Polling &amp; Actions| Gateway
+    Browser --&gt;|Download .ics| Calendar
+    Browser --&gt;|Open Venue Link| Maps
+    Gateway --&gt; LobbySvc
+    Gateway --&gt; RecSvc
+    Gateway --&gt; AcctSvc
+    LobbySvc --&gt;|Read/Write Lobby State| MemCache
+    LobbySvc --&gt;|Recommend Shortlist| RecSvc
+    LobbySvc --&gt;|Load Saved Profile| AcctSvc
+    AcctSvc --&gt;|EF Core Persistence| Postgres
+    AcctSvc --&gt;|OIDC Verification| OAuth
+    RecSvc --&gt;|Search Venues| Places
+    RecSvc --&gt;|Cache Venue Results| MemCache
+    RecSvc --&gt;|Rank Top Candidates| LLM</pre>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Status</th>
-                <th>Meaning</th>
+                <th>Architectural Tier</th>
+                <th>Runtime &amp; Hosting Infrastructure</th>
+                <th>Scaling, State &amp; Security Configuration</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>400</td>
-                <td>Malformed JSON or invalid planning input</td>
+                <td>Client Presentation Tier (<code>Next.js</code>)</td>
+                <td>Next.js (App Router, TypeScript) hosted on Vercel / Managed Node.js 24 LTS; executed in mobile and desktop browsers.</td>
+                <td>Stores <code>ClientSession</code> (<code>lobbyId</code>, <code>memberToken</code>, <code>role</code>) in browser storage to survive refreshes; polls lobby state via <code>useLobby</code>.</td>
               </tr>
               <tr>
-                <td>413</td>
-                <td>Request exceeds the 4,000-character body limit</td>
+                <td>Backend API Tier (<code>C# ASP.NET Core</code>)</td>
+                <td>Containerized ASP.NET Core Web API (2 vCPU, 4 GB RAM baseline container) behind an HTTPS / TLS 1.3 reverse proxy.</td>
+                <td>Runs as a single pinned instance when using process-local <code>IMemoryCache</code> and <code>SemaphoreSlim</code> locks; scales horizontally by switching <code>LobbyRepository</code> to Redis.</td>
               </tr>
               <tr>
-                <td>502</td>
-                <td>Provider failure or invalid/incomplete provider output</td>
+                <td>Ephemeral Lobby &amp; Venue Cache Tier</td>
+                <td>In-memory key-value store (<code>IMemoryCache</code>) with Redis drop-in support via <code>LobbyRepository</code>.</td>
+                <td>Stores active lobbies with a 2.5-hour inactivity TTL and caches <code>VenueProvider</code> responses to minimize external API calls.</td>
               </tr>
               <tr>
-                <td>503</td>
-                <td>AI feature disabled or server key unavailable</td>
+                <td>Persistent Account Database Tier</td>
+                <td>Managed PostgreSQL instance accessed via Entity Framework Core (<code>AccountRepository</code>).</td>
+                <td>Stores <code>UserAccount</code> records (OAuth provider subject IDs only; no passwords) and versioned <code>SavedTasteProfile</code> JSON documents.</td>
               </tr>
               <tr>
-                <td>504</td>
-                <td>Provider request timed out</td>
+                <td>CI/CD Pipeline (<code>.github/workflows/ci.yml</code>)</td>
+                <td>GitHub Actions (<code>ubuntu-latest</code>) runners triggered on pushes and pull requests to <code>main</code>.</td>
+                <td>Runs Prettier/ESLint, TypeScript &amp; OpenAPI contract checks, .NET build/test suites, and mocked offline verification with zero paid API calls.</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p>Provider failures are logged server-side with status/timeout context, without logging submitted preferences or API credentials. Errors from the optional provider are reported to the caller; no partial or success-shaped fallback plan is returned.</p>
-
-        <h2 id="9-security-design-detailed-design">9. Security Design (Detailed Design)</h2>
-        <ul>
-          <li>The social-dining flow keeps input in browser memory and does not send it to the application server. It does not request names. Users are instructed to enter public areas rather than private addresses and avoid sensitive or medical information.</li>
-          <li>Opening a Maps search sends its area, cuisine, and budget wording to Google. Dietary selections and notes are excluded from that URL.</li>
-          <li>The AI integration is server-side. The API key must be supplied through <code>OPENAI_API_KEY</code>; it must not be exposed through a <code>NEXT_PUBLIC_</code> variable. The feature defaults to disabled. The request asks the provider for <code>store: false</code>, which is not a guarantee of zero provider retention.</li>
-          <li>The endpoint validates body size and input/output shapes and applies a provider timeout. Those protections do not replace authentication, authorization, rate limiting, abuse detection, or spending controls, none of which are implemented.</li>
-          <li>No user authentication, roles, encryption-at-rest, audit trail, or persisted personal data store exists. Any public deployment should use HTTPS and keep the legacy AI feature disabled until production access and cost controls are added.</li>
-          <li>AI-generated recipes must be checked for allergens, ingredient amounts, and safe cooking instructions.</li>
-        </ul>
-
-        <h2 id="10-performance-optimization-detailed-design">10. Performance Optimization (Detailed Design)</h2>
-        <p>The main workflow is client-side and uses bounded arrays: at most 15 people, eight cuisines, and three shortlist options. Schedule validation, shortlist ranking, and vote tallying are small in-memory operations. There is no application database, so indexing and query optimization do not apply. The application does not implement a cache for user plans.</p>
-        <p>The AI route bounds request size, output tokens, and provider wait time. No throughput or concurrency guarantees are claimed; the route should not be publicly enabled without rate limits and spending controls.</p>
-
-        <h2 id="11-deployment-architecture-detailed-design">11. Deployment Architecture (Detailed Design)</h2>
-        <p>The project is configured for Node.js 24 LTS and npm. Development runs with <code>npm run dev</code> (<code>next dev --webpack</code>); a production build uses <code>npm run build</code> (<code>next build --webpack</code>), followed by <code>npm run start</code>. The repository configures Next.js builds to use webpack with Tailwind's PostCSS plugin because the default Turbopack build crashed on the initial Windows setup. Automated build verification runs in GitHub Actions via <code>.github/workflows/ci.yml</code>.</p>
-        <pre class="mermaid">flowchart TB
-    Repo[GitHub repository&lt;br/&gt;Megmelloy/foodplanning]
-    CI[GitHub Actions CI&lt;br/&gt;.github/workflows/ci.yml]
-    Checks[Prettier, ESLint, Next typegen,&lt;br/&gt;TypeScript, Node test runner]
-    Build[Next.js webpack build&lt;br/&gt;npm run build]
-    User[User browser]
-    App[Next.js Node.js application]
-    Static[Client page and static assets&lt;br/&gt;src/app/page.tsx]
-    Domain[Social-dining domain module&lt;br/&gt;src/lib/social-dining.ts]
-    Route[Optional meal-plan route&lt;br/&gt;POST /api/meal-plan]
-    Provider[OpenAI Responses API]
-    Maps[Google Maps]
-
-    Repo --&gt;|Push or pull request| CI
-    CI --&gt; Checks
-    Checks --&gt; Build
-    Build --&gt; App
-    User --&gt;|HTTPS in hosted deployment| App
-    App --&gt; Static
-    Static --&gt; Domain
-    User --&gt;|Optional HTTPS request| Route
-    Route --&gt;|HTTPS, only when enabled| Provider
-    User --&gt;|External Maps link| Maps</pre>
-        <p>For local development, the social-dining flow requires no API key. The legacy AI endpoint requires <code>OPENAI_API_KEY</code> and <code>ENABLE_AI_PLANNING=true</code>; the model can be selected with <code>OPENAI_MODEL</code>. Secrets belong in server-side environment configuration (locally, <code>.env.local</code>), not committed source or client-visible configuration. Public deployments should leave AI planning disabled until authentication, rate limiting, abuse prevention, and spending limits are implemented.</p>
 
         <h2 id="12-integration-and-interfaces-detailed-design">12. Integration and Interfaces (Detailed Design)</h2>
-        <p>The application separates the client-rendered social-dining interface, synchronous TypeScript domain modules, external browser navigation targets, and the optional server-side AI route.</p>
+        <p>The system integrates the Next.js client, C# ASP.NET Core domain services, backing data stores, and third-party APIs through explicitly typed interfaces and OpenAPI-synchronized contracts.</p>
         <pre class="mermaid">flowchart LR
-    UI[Planner UI component&lt;br/&gt;src/app/page.tsx]
-    Planned[Planned feature spaces&lt;br/&gt;src/app/components/planned-features.tsx]
-    Social[Social-dining domain logic&lt;br/&gt;src/lib/social-dining.ts]
-    Calendar[Calendar applications&lt;br/&gt;Downloaded .ics file]
-    Maps[Google Maps search&lt;br/&gt;HTTPS URL]
-    Route[Legacy meal-plan route&lt;br/&gt;src/app/api/meal-plan/route.ts]
-    Meal[Meal-plan schema and parser&lt;br/&gt;src/lib/meal-plan.ts]
-    OpenAI[OpenAI Responses API&lt;br/&gt;HTTPS POST JSON]
+    UI[Next.js UI &amp; useLobby Hook]
+    ApiClient[Typed ApiClient&lt;br/&gt;OpenAPI Generated]
+    Lobby[LobbyService]
+    Rec[RecommendationService]
+    Acct[UserAccountService]
+    LobbyRepo[LobbyRepository Interface]
+    AcctRepo[AccountRepository Interface]
+    VenueProv[VenueProvider Interface]
+    Ranker[VenueRanker &amp; LlmClient]
+    Cache[IMemoryCache / Redis]
+    DB[PostgreSQL Database]
+    OAuthProv[OAuth 2.0 Provider]
+    GooglePlaces[Google Places API]
+    OpenAI[OpenAI Responses API]
 
-    UI --&gt; Planned
-    UI --&gt;|Validate, rank, tally, format| Social
-    Social --&gt;|Encoded area, cuisine, budget| Maps
-    Social --&gt;|Local-time two-hour VEVENT| Calendar
-    UI -. &quot;Optional request; not used by current UI&quot; .-&gt; Route
-    Route --&gt;|Validate input and output| Meal
-    Route --&gt;|Only when enabled and keyed| OpenAI</pre>
+    UI --&gt; ApiClient
+    ApiClient --&gt;|HTTPS REST + memberToken| Lobby
+    ApiClient --&gt;|HTTPS REST + httpOnly Cookie| Acct
+    Lobby --&gt; LobbyRepo
+    Lobby --&gt;|RecommendationRequest| Rec
+    Lobby --&gt;|Load SavedTasteProfile| Acct
+    LobbyRepo --&gt; Cache
+    Acct --&gt; AcctRepo
+    AcctRepo --&gt; DB
+    Acct --&gt;|OIDC Callback| OAuthProv
+    Rec --&gt; VenueProv
+    Rec --&gt; Ranker
+    VenueProv --&gt;|Cached HTTPS Search| GooglePlaces
+    Ranker --&gt;|Schema-Validated JSON| OpenAI</pre>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Interface</th>
                 <th>Protocol / format</th>
-                <th>Data exchanged and conditions</th>
+                <th>Data exchanged, contracts, and failure handling</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Social-dining domain module (<code>src/lib/social-dining.ts</code>)</td>
-                <td>Synchronous TypeScript function calls</td>
-                <td>Validates area, future schedule (up to 365 days), and 2–15 participant profiles; ranks up to three non-skipped cuisines; tallies votes; formats <code>.ics</code> and Maps strings in browser memory.</td>
+                <td>Client to Lobby Service (<code>ApiClient</code> &leftrightarrow; <code>LobbyService</code>)</td>
+                <td>HTTPS REST, JSON, Bearer <code>memberToken</code></td>
+                <td>Handles <code>createLobby</code>, <code>createInvite</code>, <code>join</code>, <code>kick</code>, <code>submitProfile</code>, <code>startRecommendation</code>, <code>finalize</code>, and versioned <code>getLobbyView</code> polling. Returns structured <code>ApiError</code> (<code>code</code>, <code>message</code>, <code>requestId</code>) on validation or stage errors.</td>
               </tr>
               <tr>
-                <td>Google Maps</td>
-                <td>HTTPS URL opened by the browser</td>
-                <td>Search URL contains cuisine, area, and lowest group budget wording. User-initiated only; dietary needs and personal notes are excluded.</td>
+                <td>Client to User Account Service &amp; OAuth 2.0</td>
+                <td>HTTPS REST, OIDC Redirects, <code>httpOnly</code> Cookie + CSRF</td>
+                <td>Authenticates repeat users via external OAuth providers (<code>getOrCreateFromIdentity</code>) without storing passwords; supports saving, listing, and deleting <code>SavedTasteProfile</code> records.</td>
               </tr>
               <tr>
-                <td>Calendar applications</td>
-                <td>Downloaded <code>.ics</code> file</td>
-                <td>The browser generates a local-time two-hour iCalendar event for the selected cuisine, area, and dinner schedule.</td>
+                <td>OpenAPI Contract Synchronization</td>
+                <td>OpenAPI 3.0 JSON &rightarrow; TypeScript types</td>
+                <td>Generates shared client TypeScript definitions (<code>TasteProfile</code>, <code>Lobby</code>, <code>RankedVenue</code>, <code>ApiError</code>) directly from the ASP.NET API specification.</td>
               </tr>
               <tr>
-                <td>OpenAI Responses API</td>
-                <td>HTTPS <code>POST</code>, JSON</td>
-                <td>Used only by the optional <code>/api/meal-plan</code> route when enabled and configured. Sends requested days, servings, and anonymous preferences with <code>store: false</code> and a 45-second timeout; requests structured JSON output.</td>
+                <td>Venue Provider (<code>VenueProvider</code> &rightarrow; Google Places API)</td>
+                <td>HTTPS <code>GET</code>/<code>POST</code>, JSON</td>
+                <td>Queries candidate venues by <code>SearchArea</code> (coordinates or postal code and radius) and mapped cuisine categories. Caches venue lookups and enforces timeouts with retry backoff.</td>
               </tr>
               <tr>
-                <td>Browser to application</td>
-                <td>Next.js page request; optional JSON <code>POST</code></td>
-                <td>Loads the app and static assets. The current dining flow does not submit its state to the server; only an independent caller can use the legacy API.</td>
+                <td>LLM Ranker (<code>LlmClient</code> &rightarrow; OpenAI API)</td>
+                <td>HTTPS <code>POST</code>, Structured JSON Schema</td>
+                <td>Sends aggregated <code>GroupPreferences</code> (never individual profiles) and the top ~10 deterministically filtered venues. Validates returned venue IDs against the candidate set and falls back to <code>DeterministicRanker</code> on timeout or invalid output.</td>
+              </tr>
+              <tr>
+                <td>Browser Geolocation, Maps &amp; Calendar Export</td>
+                <td>HTML5 Geolocation, HTTPS Maps URL, <code>.ics</code> file</td>
+                <td>Captures organizer location with manual ZIP fallback; opens external Google Maps links for recommended venues; downloads an RFC 5545 <code>.ics</code> event upon finalization.</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p>There is no restaurant-provider API, invitation service, identity provider, or shared-storage integration.</p>
 
         <h2 id="13-testing-strategy-detailed-design">13. Testing Strategy (Detailed Design)</h2>
-        <p>Tests use Node's built-in test runner (<code>node --test tests/*.test.mjs</code>) with JavaScript test files importing the TypeScript domain modules. Tests run offline and do not make paid AI calls.</p>
+        <p>Verification spans unit, integration, contract, and end-to-end acceptance testing across both the Next.js TypeScript frontend and the C# ASP.NET Core backend. Automated test suites mock external providers so tests run deterministically offline without incurring paid API charges.</p>
         <ul>
-          <li><strong>Unit/domain tests:</strong> 18 automated tests in <code>tests/social-dining.test.mjs</code> and <code>tests/meal-plan.test.mjs</code> validate planning and meal-plan inputs, schedule limits, 2–15 participant bounds, shortlist ranking and skips, Maps URL construction without leaking notes or dietary needs, vote totals and tie behavior, small-party invite limits, <code>.ics</code> calendar output, and meal-plan schema parsing.</li>
-          <li><strong>Integration/system tests:</strong> no browser-level end-to-end or deployed-system suite is currently configured. The AI endpoint is not exercised against a live provider in the test suite.</li>
-          <li><strong>Acceptance testing:</strong> use the user flows in sections 5.1 and 5.3 on <code>http://localhost:3000</code> and confirm restaurant details directly with the venue. No automated acceptance framework is configured.</li>
-          <li><strong>Static/build checks:</strong> run Prettier formatting verification, ESLint, Next.js route type generation and TypeScript type-checking, unit tests, and a production webpack build locally and in GitHub Actions (<code>.github/workflows/ci.yml</code>).</li>
+          <li><strong>Backend unit tests (xUnit &amp; Moq):</strong> verify <code>LobbyService</code> stage transitions (<code>Open</code> &rightarrow; <code>Recommending</code> &rightarrow; <code>Voting</code> &rightarrow; <code>Finalized</code>), 1–15 member limits, <code>SemaphoreSlim</code> concurrency locking, 2.5-hour inactivity expiration, <code>GroupPreferences</code> aggregation, hard dietary/skip filtering, <code>emptyReason</code> diagnostics, and <code>LlmRanker</code> fallback to <code>DeterministicRanker</code> on timeout or invalid venue IDs.</li>
+          <li><strong>Frontend unit and component tests (Node test runner / Vitest):</strong> verify client-side <code>TasteProfile.validate()</code> logic, versioned JSON serialization, <code>useLobby</code> polling updates, <code>ClientSession</code> storage across refreshes, role-gated organizer controls, and <code>.ics</code> calendar generation.</li>
+          <li><strong>API and integration tests (ASP.NET <code>WebApplicationFactory</code>):</strong> test full HTTP REST workflows against in-memory/Redis lobby stores and containerized PostgreSQL databases, verifying hashed invite/member token checks, OAuth session cookie and CSRF guards, and cascading profile deletion on <code>deleteAccount</code>.</li>
+          <li><strong>End-to-end acceptance testing (Playwright):</strong> simulates an Organizer and multiple concurrent Participants across separate browser contexts creating a lobby, joining via <code>/join/[token]</code>, submitting taste profiles, reviewing the ranked venue shortlist, and finalizing the selection.</li>
         </ul>
-        <p>Commands (macOS / Linux / CI):</p>
+        <p>Verification commands (Frontend &amp; Backend CI):</p>
         <pre><code class="language-bash">npm run lint
 npx next typegen &amp;&amp; npm run typecheck
 npm test
-npm run build</code></pre>
-        <p>Commands (PowerShell):</p>
-        <pre><code class="language-powershell">npm.cmd run lint
-npm.cmd run typecheck
-npm.cmd test
-npm.cmd run build</code></pre>
+npm run build
+dotnet test</code></pre>
 
         <h2 id="14-maintenance-and-support-detailed-design">14. Maintenance and Support (Detailed Design)</h2>
-        <p>The repository is maintained in Git and hosted at <a href="https://github.com/Megmelloy/foodplanning">Megmelloy/foodplanning</a>. The README and AGENTS.md document local setup, feature behavior, privacy notes, checks, and deployment cautions.</p>
+        <p>The project is maintained in Git on GitHub (<a href="https://github.com/Megmelloy/foodplanning">Megmelloy/foodplanning</a>) using feature branches, pull request reviews, and automated Continuous Integration checks.</p>
         <ul>
-          <li><strong>Continuous Integration and formatting:</strong> Pull requests and pushes to <code>main</code> run <code>.github/workflows/ci.yml</code> on Node.js 24 LTS with <code>ENABLE_AI_PLANNING=&quot;false&quot;</code>. On pull requests, the workflow automatically formats code to the standard clean format via Prettier before verifying ESLint, Next.js TypeScript types, unit tests, and the production webpack build.</li>
-          <li><strong>Dependency management:</strong> Dependencies are locked in <code>package-lock.json</code> and installed with <code>npm ci</code>. The initial dependency audit reports five high-severity advisories through <code>braces</code> in the ESLint development dependency chain; npm's proposed forced fix downgrades the Next.js ESLint config across major versions, so it is not applied. Track upstream fixes and rerun <code>npm audit</code> when updating dependencies.</li>
-          <li><strong>Feature and contract updates:</strong> Planned feature spaces for requirements 2–10 remain non-interactive in <code>src/app/components/planned-features.tsx</code> until backend providers and shared storage exist. When changing dining rules, update <code>src/lib/social-dining.ts</code>, the associated tests, and README behavior notes. When changing the API contract or environment settings, update <code>src/lib/meal-plan.ts</code>, endpoint tests, and setup/security documentation.</li>
+          <li><strong>Continuous Integration and release management:</strong> Pull requests and pushes to <code>main</code> trigger <code>.github/workflows/ci.yml</code>, enforcing clean code formatting (Prettier and <code>dotnet format</code>), static analysis (ESLint and .NET analyzers), OpenAPI-to-TypeScript type synchronization, unit/integration test suites, and production builds prior to deployment promotion.</li>
+          <li><strong>Schema versioning and modular extensibility:</strong> <code>TasteProfile</code> payloads include a <code>schemaVersion</code> attribute so saved profiles in PostgreSQL can be migrated forward as cuisine or dietary options evolve. Core services depend on interfaces (<code>LobbyRepository</code>, <code>AccountRepository</code>, <code>VenueProvider</code>, <code>VenueRanker</code>), allowing maintainers to transition from single-instance <code>IMemoryCache</code> to distributed Redis or swap venue/LLM providers without rewriting domain logic.</li>
+          <li><strong>Observability, privacy auditing, and dependency hygiene:</strong> Server operations emit structured logs correlated by <code>requestId</code> for provider outages, fallbacks, and error spikes while redacting dietary details, raw invite/member tokens, and personal data. Inactive lobbies are automatically purged after 2.5 hours, and dependencies are audited regularly via <code>npm audit</code> and <code>dotnet list package --vulnerable</code>.</li>
         </ul>
 
         <h2 id="15-glossary">15. Glossary</h2>
@@ -557,35 +796,31 @@ npm.cmd run build</code></pre>
             <tbody>
               <tr>
                 <td>Table Sync</td>
-                <td>User-facing name of the social-dining planner.</td>
+                <td>User-facing name of the group dining planner application.</td>
+              </tr>
+              <tr>
+                <td>Lobby</td>
+                <td>A stateful, temporary session (expiring after 2.5 hours of inactivity) where an Organizer and up to 15 Participants gather taste profiles and select a restaurant.</td>
               </tr>
               <tr>
                 <td>Organizer</td>
-                <td>Person 1, who controls the shared-device guest list and breaks vote ties.</td>
+                <td>The user who creates the lobby, sets the search area, manages invite links and participants, triggers recommendations, and finalizes the venue pick.</td>
               </tr>
               <tr>
-                <td>Participant</td>
-                <td>A numbered group member whose preferences and optional vote are entered on the device.</td>
+                <td>TasteProfile</td>
+                <td>A versioned structure recording a user's cuisine ratings (<code>Love</code>, <code>Ok</code>, <code>Skip</code>), maximum price level (<code>1–4</code>), and hard dietary restrictions.</td>
               </tr>
               <tr>
-                <td>Cuisine shortlist</td>
-                <td>Up to three cuisine ideas that are not skipped by any participant, ranked by favorites.</td>
+                <td>VenueProvider</td>
+                <td>Backend abstraction (e.g., <code>GooglePlacesProvider</code>) that searches and caches candidate restaurants within the Organizer's search area.</td>
               </tr>
               <tr>
-                <td>Budget</td>
-                <td>Per-person price comfort (<code>$</code>, <code>$$</code>, or <code>$$$</code>); the lowest group selection determines Maps search wording.</td>
+                <td>DeterministicRanker / LlmRanker</td>
+                <td>Ranking implementations of <code>VenueRanker</code>; filters and scores venues deterministically first, uses an LLM to rank the top shortlist, and falls back to rule-based ranking on error.</td>
               </tr>
               <tr>
                 <td><code>.ics</code></td>
-                <td>iCalendar file format used for the downloadable dinner event.</td>
-              </tr>
-              <tr>
-                <td>Responses API</td>
-                <td>OpenAI API used only by the optional legacy meal-plan endpoint.</td>
-              </tr>
-              <tr>
-                <td>Legacy meal-plan endpoint</td>
-                <td><code>/api/meal-plan</code>, an opt-in server-side AI cooking-plan API not used by the current dining UI.</td>
+                <td>RFC 5545 iCalendar file format used for the downloadable dinner event.</td>
               </tr>
             </tbody>
           </table>
@@ -593,13 +828,9 @@ npm.cmd run build</code></pre>
 
         <h2 id="16-references">16. References</h2>
         <ul>
-          <li><a href="./README.md">Project README</a> — setup, actual user behavior, privacy, and deployment limitations.</li>
-          <li><a href="./src/app/page.tsx">Planner interface</a> — social-dining screens and transient UI state.</li>
-          <li><a href="./src/lib/social-dining.ts">Social-dining domain logic</a> — types, validation, schedule, shortlist, vote, and calendar rules.</li>
-          <li><a href="./src/app/api/meal-plan/route.ts">Meal-plan API route</a> — optional provider integration and HTTP error handling.</li>
-          <li><a href="./src/lib/meal-plan.ts">Meal-plan types and validation</a> — request and response shapes.</li>
-          <li><a href="./tests/social-dining.test.mjs">Social-dining tests</a> and <a href="./tests/meal-plan.test.mjs">meal-plan tests</a> — automated domain validation.</li>
-          <li><a href="./package.json">Package scripts and dependencies</a> — runtime framework and verification commands.</li>
+          <li><a href="./README.md">Project README</a> — repository setup, architecture overview, and verification commands.</li>
+          <li><a href="./.github/workflows/ci.yml">GitHub Actions CI Workflow</a> — automated formatting, linting, type-checking, unit testing, and build pipeline.</li>
+          <li><a href="./package.json">Frontend Package Configuration</a> — Next.js, React, TypeScript, and verification scripts.</li>
         </ul>
       </article>
       <p class="footer">Table Sync · Food Planning</p>
