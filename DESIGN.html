@@ -43,34 +43,37 @@
       </header>
       <article class="content">
         <h2 id="1-introduction">1. Introduction</h2>
-        <p>This document describes the design of Table Sync, the food-planning project in this repository. It records the current architecture, user flows, data structures, external integrations, quality goals, and verification approach. It is intended for the project team, instructors/reviewers, and future maintainers.</p>
-        <p>The primary scope is the implemented social-dining planner: a group enters a public area and dinner time, records individual tastes, creates a cuisine shortlist, votes on one device, and may export a calendar event. The repository also contains a legacy, opt-in AI meal-planning endpoint. It is documented here for completeness, but it is not connected to the current Table Sync interface.</p>
-        <p>This is a small-group, single-device application, not a restaurant booking system. It does not currently have user accounts, a database, persisted plans, cross-device participation, outbound invitations, or verified restaurant listings.</p>
+        <p>This document defines the intended architecture and detailed design of Table Sync, a collaborative food-planning application. It describes the system's responsibilities, components, data flows, integrations, and quality requirements for the project team, reviewers, and future maintainers.</p>
+        <p>Table Sync enables users to create accounts, organize dining sessions, invite participants, and contribute preferences from their own devices. The application stores account information, group membership, preferences, and planning results in a persistent database. AI-assisted planning is an integrated system capability, supported through a server-side connection to an AI provider.</p>
 
         <h2 id="2-system-overview-architectural-design">2. System Overview (Architectural Design)</h2>
-        <p>The application is a Next.js App Router project using React and TypeScript. The social-dining experience is implemented as a client-rendered page. Its domain calculations and validation are synchronous TypeScript functions; no application server request is made to build or vote on a social-dining plan. The separate meal-plan route runs on the server and can call the OpenAI Responses API only when explicitly enabled and configured.</p>
+        <p>Table Sync uses a client-server architecture. A responsive web client supports account access, session creation, invitations, preference collection, and presentation of planning results across devices.</p>
+        <p>The application backend exposes an authenticated API and contains logical modules for accounts, dining sessions, group membership, preferences, and AI-assisted planning. It validates requests, enforces permissions, applies planning rules, and coordinates external integrations.</p>
+        <p>A persistent database is the authoritative source for application data. Participants access the same dining session from separate devices, and accepted changes are made available to other authorized session members. Refreshing or reconnecting does not discard successfully saved information.</p>
+        <p>The backend communicates with the AI provider and invitation-delivery service. Provider credentials remain server-side. External location and calendar integrations support the planning experience without becoming the authoritative store for group data.</p>
         <pre class="mermaid">flowchart LR
-    Person[Organizer and participants]
-    Browser[Web browser]
-    UI[Table Sync planner UI&lt;br/&gt;src/app/page.tsx]
-    Domain[Social dining rules&lt;br/&gt;src/lib/social-dining.ts]
-    Next[Next.js application]
-    API[Optional legacy API&lt;br/&gt;POST /api/meal-plan]
-    Meal[Meal-plan validation and schema&lt;br/&gt;src/lib/meal-plan.ts]
-    Maps[Google Maps search]
-    OpenAI[OpenAI Responses API]
+    Users[Organizers and participants]
+    Client[Responsive web client]
+    API[Authenticated application API]
+    Auth[Accounts and authorization]
+    Planning[Sessions, membership and preferences]
+    Database[(Persistent database)]
+    AI[AI planning integration]
+    OpenAI[AI provider]
+    Invitations[Invitation integration]
+    Delivery[Invitation delivery service]
 
-    Person --&gt; Browser
-    Browser --&gt; UI
-    UI --&gt; Domain
-    Browser --&gt;|Open selected search link| Maps
-    Browser --&gt;|Load app| Next
-    Next --&gt; UI
-    Browser -. &quot;Optional request; not used by current UI&quot; .-&gt; API
-    API --&gt; Meal
-    API --&gt;|Only when enabled and keyed| OpenAI
-    OpenAI --&gt; API</pre>
-        <p>In the social-dining flow, the browser holds all current planning state in React memory. A refresh clears the group and its votes. Google Maps receives a search link containing the selected area, cuisine, and applicable budget wording; dietary needs and individual notes are not included. The user chooses a specific restaurant from Google's results and confirms suitability directly with that restaurant.</p>
+    Users --&gt; Client
+    Client &lt;--&gt;|HTTPS requests and shared-session updates| API
+    API --&gt; Auth
+    API --&gt; Planning
+    Auth --&gt; Database
+    Planning &lt;--&gt; Database
+    Planning --&gt; AI
+    AI &lt;--&gt; OpenAI
+    Planning --&gt; Invitations
+    Invitations --&gt; Delivery</pre>
+        <p>These are logical components, not independently deployed microservices. They can initially reside within one backend application.</p>
 
         <h2 id="3-stakeholders-architectural-design">3. Stakeholders (Architectural Design)</h2>
         <div class="table-wrap">
@@ -88,32 +91,32 @@
               </tr>
               <tr>
                 <td>Organizer</td>
-                <td>Set the public area and schedule; manage the guest list on the device; review the summary; break vote ties; finalize the pick.</td>
+                <td>Create and manage dining sessions, invite participants, monitor responses, and finalize a planning result.</td>
               </tr>
               <tr>
                 <td>Participants</td>
-                <td>Enter cuisine preferences, price comfort, dietary needs, and optional notes; cast or change a vote on the shared device.</td>
+                <td>Access invitations, join authorized sessions from their own devices, submit or update preferences, and view shared results.</td>
               </tr>
               <tr>
                 <td>Restaurant decision-makers (the group)</td>
-                <td>Need accurate current hours, prices, seating, and dietary information; the application does not verify these.</td>
+                <td>Receive relevant planning information with clear distinctions between provider-supplied facts, AI-generated suggestions, and information requiring restaurant confirmation.</td>
               </tr>
               <tr>
-                <td>Google Maps</td>
-                <td>Receives search terms when a participant follows a Maps link.</td>
+                <td>Google Maps / location provider</td>
+                <td>Receive only necessary location-search information; integration must respect provider terms, quotas, and attribution requirements.</td>
               </tr>
               <tr>
-                <td>OpenAI</td>
-                <td>Receives meal-planning input only if the legacy endpoint is deliberately enabled and called.</td>
+                <td>OpenAI / AI provider</td>
+                <td>Support the application's AI-planning capability through authenticated server-side requests, with defined input/output contracts, privacy controls, and usage limits.</td>
               </tr>
               <tr>
                 <td>Maintainers and reviewers</td>
-                <td>Need documented setup, configuration, privacy limits, test commands, and known deployment risks.</td>
+                <td>Understand component boundaries, data models, deployment requirements, monitoring, recovery procedures, and verification criteria.</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p>No separate operational/support team, business owner, or production hosting provider is specified in the repository.</p>
+        <p>The project team is responsible for assigning ownership of deployment, account support, incident handling, and external-service configuration before production release.</p>
 
         <h2 id="4-quality-attributes-architectural-design">4. Quality Attributes (Architectural Design)</h2>
         <div class="table-wrap">
@@ -121,41 +124,41 @@
             <thead>
               <tr>
                 <th>Attribute</th>
-                <th>Design response and current limitation</th>
+                <th>Architectural response and verification</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>Usability</td>
-                <td>A three-step, responsive flow separates scheduling, preferences, and voting. The page uses labeled controls, visible progress, inline errors, and vote totals. Participation is pass-the-device rather than remote.</td>
+                <td>Provide responsive, accessible workflows for account access, invitations, preference entry, and reviewing results. Swipe interactions must also support buttons and keyboard input. Validate workflows through usability and accessibility testing.</td>
               </tr>
               <tr>
                 <td>Correctness</td>
-                <td>Domain functions validate schedule and preference shapes, exclude any cuisine skipped by a participant, rank remaining cuisines by favorites, constrain votes to the shortlist, and handle ties explicitly. Automated tests cover these rules.</td>
+                <td>Validate data and enforce permissions on the server. Maintain consistent session membership and preferences, and generate results from an identified version of the group's inputs. Validate AI output before accepting it into application state.</td>
               </tr>
               <tr>
                 <td>Privacy</td>
-                <td>Social-dining data stays in browser memory and is not sent to an application API. Names are not requested. Maps queries omit notes and dietary needs. Refreshing clears the state.</td>
+                <td>Collect only necessary account and planning data. Restrict access to authorized users, minimize information sent to external providers, and define retention and deletion rules. Exclude credentials and sensitive planning details from logs.</td>
               </tr>
               <tr>
                 <td>Security</td>
-                <td>The optional AI key is read from server environment variables, not browser code. The AI route validates request and response data, has an explicit enable switch, and times out provider calls. The route has no authentication, authorization, per-user rate limit, or abuse controls, so public AI deployment is not supported.</td>
+                <td>Require authentication and session-level authorization. Protect invitation acceptance, validate requests, keep secrets server-side, and apply rate limits and AI spending controls. Protect data in transit and at rest using deployment-appropriate mechanisms.</td>
               </tr>
               <tr>
                 <td>Maintainability</td>
-                <td>UI, social-dining rules, and legacy meal-plan validation are in separate files. TypeScript, ESLint, and Node's built-in test runner are configured.</td>
+                <td>Separate presentation, API handling, business rules, persistence, and provider integrations. Use typed contracts, database migrations, automated tests, and CI checks to support changes without coupling the UI to provider-specific details.</td>
               </tr>
               <tr>
                 <td>Performance</td>
-                <td>Social-dining calculations are local and operate on bounded small groups and fixed cuisine choices. The AI route uses a request timeout; no caching, database indexing, or load-scaling design is needed or implemented for the current application.</td>
+                <td>Use indexed database access, bounded API responses, efficient synchronization, and selective caching. Define and test response-time and concurrency targets for ordinary application operations separately from AI generation.</td>
               </tr>
               <tr>
                 <td>Availability and resilience</td>
-                <td>The main planning flow does not depend on the AI provider. Maps navigation and AI generation do depend on external services when used; service failures are surfaced to the user. There is no persistent recovery after refresh.</td>
+                <td>Persist accepted changes, support recovery after disconnection, and provide database backup and restore procedures. Handle external-service failures with explicit states, timeouts, and bounded retries where safe.</td>
               </tr>
               <tr>
                 <td>Interoperability</td>
-                <td>The planner opens Google Maps URLs and exports an <code>.ics</code> calendar event. The legacy endpoint exchanges JSON with OpenAI's Responses API.</td>
+                <td>Define stable API and provider contracts. Support invitation delivery, AI integration, location links, and standard calendar exports through clearly separated integration boundaries.</td>
               </tr>
             </tbody>
           </table>
@@ -429,8 +432,18 @@
         </ul>
 
         <h2 id="10-performance-optimization-detailed-design">10. Performance Optimization (Detailed Design)</h2>
-        <p>The main workflow is client-side and uses bounded arrays: at most 15 people, eight cuisines, and three shortlist options. Schedule validation, shortlist ranking, and vote tallying are small in-memory operations. There is no application database, so indexing and query optimization do not apply. The application does not implement a cache for user plans.</p>
-        <p>The AI route bounds request size, output tokens, and provider wait time. No throughput or concurrency guarantees are claimed; the route should not be publicly enabled without rate limits and spending controls.</p>
+        <h3 id="10-1-database-access">10.1 Database Access</h3>
+        <p>Database queries will be designed around account lookup, session membership, invitation validation, preference retrieval, and saved results. Primary keys, uniqueness constraints, and indexes will support these access patterns. Group data will be fetched without per-participant query loops, and query plans will be inspected when measurements identify slow operations.</p>
+        <h3 id="10-2-api-and-client-efficiency">10.2 API and Client Efficiency</h3>
+        <p>The API will return only the information required by each screen and paginate potentially growing collections such as session history. The client will maintain temporary interaction state for responsive preference entry while clearly distinguishing pending changes from successfully saved data.</p>
+        <h3 id="10-3-cross-device-synchronization">10.3 Cross-Device Synchronization</h3>
+        <p>Shared-session updates will use a synchronization mechanism selected against the required update latency and deployment environment. Updates should transfer changed data where practical, avoid unnecessary full-session reloads, and handle stale or conflicting writes explicitly.</p>
+        <h3 id="10-4-caching">10.4 Caching</h3>
+        <p>Cache stable reference data and suitable external-service responses where provider terms permit. Any caching of session-derived results must respect access controls and be invalidated when relevant preferences or membership change. Private session data must not be exposed through shared caches.</p>
+        <h3 id="10-5-ai-and-invitation-processing">10.5 AI and Invitation Processing</h3>
+        <p>AI requests will have input and output limits, timeouts, concurrency controls, and usage budgets. Long-running operations should expose a pending state rather than block unrelated actions. Invitation delivery and AI requests will use bounded retries only where duplicate effects can be prevented. Users will receive explicit failure states rather than fabricated successful results.</p>
+        <h3 id="10-6-measurement-and-verification">10.6 Measurement and Verification</h3>
+        <p>Performance testing will cover simultaneous participants updating a session, multiple active sessions, database access, invitation delivery, and AI-provider delays. Monitor API latency percentiles, error rates, database query duration, and AI latency and cost. Document the expected workload and agreed acceptance thresholds before evaluating whether optimizations meet requirements.</p>
 
         <h2 id="11-deployment-architecture-detailed-design">11. Deployment Architecture (Detailed Design)</h2>
         <p>The project is configured for Node.js 24 LTS and npm. Development runs with <code>npm run dev</code> (<code>next dev --webpack</code>); a production build uses <code>npm run build</code> (<code>next build --webpack</code>), followed by <code>npm run start</code>. The repository configures Next.js builds to use webpack with Tailwind's PostCSS plugin because the default Turbopack build crashed on the initial Windows setup. Automated build verification runs in GitHub Actions via <code>.github/workflows/ci.yml</code>.</p>
