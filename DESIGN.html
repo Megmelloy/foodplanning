@@ -589,9 +589,9 @@
           </li>
           <li><strong>Guest (Participant) View:</strong>
             <ol>
-              <li>Join session via `/join/[token]` anonymously with a display name or via OAuth sign-in (with saved profile pre-fill).</li>
+              <li>Join session via <code>/join/[token]</code> anonymously with a display name or via OAuth sign-in (with saved profile pre-fill).</li>
               <li>Input cuisine preferences (Love, Ok, or Skip), maximum price comfort, and hard dietary restrictions.</li>
-              <li>Review the live lobby roster, ranked venue shortlist, finalized venue link, and `.ics` calendar export.</li>
+              <li>Review the live lobby roster, ranked venue shortlist, finalized venue link, and <code>.ics</code> calendar export.</li>
             </ol>
           </li>
         </ul>
@@ -684,6 +684,7 @@
             </tbody>
           </table>
         </div>
+        <p>All browser traffic uses HTTPS. Optional user account sessions are stored in <code>Secure</code>, <code>httpOnly</code> cookies with CSRF protections on routes that mutate state, while active lobby operations authenticate via hashed invite and member tokens (<code>tokenHash</code>). External provider credentials (Google Places API, OpenAI API, OAuth client secrets, and database connection strings) remain strictly in server-side environment configuration.</p>
 
         <h2 id="12-integration-and-interfaces-detailed-design">12. Integration and Interfaces (Detailed Design)</h2>
         <p>The system integrates the Next.js client, C# ASP.NET Core domain services, backing data stores, and third-party APIs through explicitly typed interfaces and OpenAPI-synchronized contracts.</p>
@@ -762,18 +763,25 @@
         </div>
 
         <h2 id="13-testing-strategy-detailed-design">13. Testing Strategy (Detailed Design)</h2>
-        <p>Verification spans unit, integration, contract, and end-to-end acceptance testing across both the Next.js TypeScript frontend and the C# ASP.NET Core backend. Automated test suites mock external providers so tests run deterministically offline without incurring paid API charges.</p>
+        <p>The planned verification strategy spans unit, integration, contract, and end-to-end acceptance testing across both the Next.js TypeScript frontend and the C# ASP.NET Core backend. Automated test suites are designed to mock external providers so tests run deterministically offline without incurring paid API charges.</p>
         <ul>
-          <li><strong>Backend unit tests (xUnit &amp; Moq):</strong> verify <code>LobbyService</code> stage transitions (<code>Open</code> &rightarrow; <code>Recommending</code> &rightarrow; <code>Voting</code> &rightarrow; <code>Finalized</code>), 1–15 member limits, <code>SemaphoreSlim</code> concurrency locking, 2.5-hour inactivity expiration, <code>GroupPreferences</code> aggregation, hard dietary/skip filtering, <code>emptyReason</code> diagnostics, and <code>LlmRanker</code> fallback to <code>DeterministicRanker</code> on timeout or invalid venue IDs.</li>
-          <li><strong>Frontend unit and component tests (Node test runner / Vitest):</strong> verify client-side <code>TasteProfile.validate()</code> logic, versioned JSON serialization, <code>useLobby</code> polling updates, <code>ClientSession</code> storage across refreshes, role-gated organizer controls, and <code>.ics</code> calendar generation.</li>
-          <li><strong>API and integration tests (ASP.NET <code>WebApplicationFactory</code>):</strong> test full HTTP REST workflows against in-memory/Redis lobby stores and containerized PostgreSQL databases, verifying hashed invite/member token checks, OAuth session cookie and CSRF guards, and cascading profile deletion on <code>deleteAccount</code>.</li>
-          <li><strong>End-to-end acceptance testing (Playwright):</strong> simulates an Organizer and multiple concurrent Participants across separate browser contexts creating a lobby, joining via <code>/join/[token]</code>, submitting taste profiles, reviewing the ranked venue shortlist, and finalizing the selection.</li>
+          <li><strong>Backend unit tests (xUnit &amp; Moq):</strong> will verify <code>LobbyService</code> stage transitions (<code>Open</code> &rightarrow; <code>Recommending</code> &rightarrow; <code>Voting</code> &rightarrow; <code>Finalized</code>), 1–15 member limits, <code>SemaphoreSlim</code> concurrency locking, 2.5-hour inactivity expiration, <code>GroupPreferences</code> aggregation, hard dietary/skip filtering, <code>emptyReason</code> diagnostics, and <code>LlmRanker</code> fallback to <code>DeterministicRanker</code> on timeout or invalid venue IDs.</li>
+          <li><strong>Frontend unit and component tests (Node test runner / Vitest):</strong> will verify client-side <code>TasteProfile.validate()</code> logic, versioned JSON serialization, <code>useLobby</code> polling updates, <code>ClientSession</code> storage across refreshes, role-gated organizer controls, and <code>.ics</code> calendar generation.</li>
+          <li><strong>API and integration tests (ASP.NET <code>WebApplicationFactory</code>):</strong> will test full HTTP REST workflows against in-memory/Redis lobby stores and containerized PostgreSQL databases, verifying hashed invite/member token checks, OAuth session cookie and CSRF guards, and cascading profile deletion on <code>deleteAccount</code>.</li>
+          <li><strong>End-to-end acceptance testing (Playwright):</strong> will simulate an Organizer and multiple concurrent Participants across separate browser contexts creating a lobby, joining via <code>/join/[token]</code>, submitting taste profiles, reviewing the ranked venue shortlist, and finalizing the selection.</li>
+          <li><strong>Static and build checks:</strong> the CI pipeline (<code>.github/workflows/ci.yml</code>) will execute Prettier and <code>dotnet format</code> verification, ESLint, Next.js route type generation, TypeScript and OpenAPI contract checks, unit/integration tests, and production builds locally and in GitHub Actions.</li>
         </ul>
-        <p>Verification commands (Frontend &amp; Backend CI):</p>
+        <p>Commands (macOS / Linux / CI):</p>
         <pre><code class="language-bash">npm run lint
 npx next typegen &amp;&amp; npm run typecheck
 npm test
 npm run build
+dotnet test</code></pre>
+        <p>Commands (PowerShell):</p>
+        <pre><code class="language-powershell">npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run build
 dotnet test</code></pre>
 
         <h2 id="14-maintenance-and-support-detailed-design">14. Maintenance and Support (Detailed Design)</h2>
@@ -795,32 +803,36 @@ dotnet test</code></pre>
             </thead>
             <tbody>
               <tr>
-                <td>Table Sync</td>
-                <td>User-facing name of the group dining planner application.</td>
+                <td>CI/CD</td>
+                <td>Continuous Integration and Continuous Delivery pipeline (<code>.github/workflows/ci.yml</code>) running on GitHub Actions to automate code formatting, linting, contract checks, unit/integration testing, and builds.</td>
               </tr>
               <tr>
-                <td>Lobby</td>
-                <td>A stateful, temporary session (expiring after 2.5 hours of inactivity) where an Organizer and up to 15 Participants gather taste profiles and select a restaurant.</td>
+                <td><code>IMemoryCache</code> / Redis</td>
+                <td>Server-side key-value caching stores accessed via <code>LobbyRepository</code> to hold versioned active lobby state (with a 2.5-hour inactivity TTL) and cached <code>VenueProvider</code> search responses.</td>
               </tr>
               <tr>
-                <td>Organizer</td>
-                <td>The user who creates the lobby, sets the search area, manages invite links and participants, triggers recommendations, and finalizes the venue pick.</td>
+                <td>OpenAPI</td>
+                <td>Language-agnostic REST API specification generated by the C# ASP.NET Core backend to synchronize shared TypeScript client data models (<code>TasteProfile</code>, <code>Lobby</code>, <code>RankedVenue</code>, <code>ApiError</code>).</td>
               </tr>
               <tr>
-                <td>TasteProfile</td>
-                <td>A versioned structure recording a user's cuisine ratings (<code>Love</code>, <code>Ok</code>, <code>Skip</code>), maximum price level (<code>1–4</code>), and hard dietary restrictions.</td>
+                <td>OAuth 2.0 / OIDC</td>
+                <td>External OpenID Connect identity protocol used by <code>UserAccountService</code> to authenticate repeat users via <code>Secure</code>, <code>httpOnly</code> session cookies without storing passwords in PostgreSQL.</td>
               </tr>
               <tr>
-                <td>VenueProvider</td>
-                <td>Backend abstraction (e.g., <code>GooglePlacesProvider</code>) that searches and caches candidate restaurants within the Organizer's search area.</td>
+                <td><code>SemaphoreSlim</code></td>
+                <td>Asynchronous .NET synchronization primitive used by <code>LobbyService</code> to serialize concurrent state mutations per lobby.</td>
               </tr>
               <tr>
-                <td>DeterministicRanker / LlmRanker</td>
-                <td>Ranking implementations of <code>VenueRanker</code>; filters and scores venues deterministically first, uses an LLM to rank the top shortlist, and falls back to rule-based ranking on error.</td>
+                <td><code>WebApplicationFactory</code></td>
+                <td>ASP.NET Core integration testing utility used to spin up an in-memory test server for verifying full HTTP REST workflows, token guards, and database interactions.</td>
               </tr>
               <tr>
-                <td><code>.ics</code></td>
-                <td>RFC 5545 iCalendar file format used for the downloadable dinner event.</td>
+                <td>Playwright</td>
+                <td>Multi-browser end-to-end (E2E) testing framework used to simulate concurrent Organizer and Participant sessions across isolated browser contexts.</td>
+              </tr>
+              <tr>
+                <td><code>.ics</code> (iCalendar)</td>
+                <td>Standard RFC 5545 calendar file format generated by the browser so participants can download finalized dinner events to their local calendar applications.</td>
               </tr>
             </tbody>
           </table>
@@ -828,9 +840,13 @@ dotnet test</code></pre>
 
         <h2 id="16-references">16. References</h2>
         <ul>
-          <li><a href="./README.md">Project README</a> — repository setup, architecture overview, and verification commands.</li>
-          <li><a href="./.github/workflows/ci.yml">GitHub Actions CI Workflow</a> — automated formatting, linting, type-checking, unit testing, and build pipeline.</li>
-          <li><a href="./package.json">Frontend Package Configuration</a> — Next.js, React, TypeScript, and verification scripts.</li>
+          <li><a href="https://nextjs.org/docs">Next.js &amp; TypeScript Documentation</a> — App Router architecture, <code>next typegen</code> route type generation, and production Webpack build configuration.</li>
+          <li><a href="https://learn.microsoft.com/en-us/aspnet/core/">C# ASP.NET Core Documentation</a> — Web API controllers, <code>IMemoryCache</code>, <code>SemaphoreSlim</code> concurrency, CSRF protection, and <code>WebApplicationFactory</code> integration testing.</li>
+          <li><a href="https://learn.microsoft.com/en-us/ef/core/">Entity Framework Core &amp; PostgreSQL (Npgsql)</a> — Relational persistence for <code>AccountRepository</code>, schema migrations, and JSON column serialization.</li>
+          <li><a href="https://swagger.io/specification/">OpenAPI 3.0 Specification</a> — Automated REST contract generation and C#-to-TypeScript schema synchronization.</li>
+          <li><a href="https://developers.google.com/maps/documentation/places/web-service">Google Places API &amp; Google Maps URLs</a> — External venue search integration (<code>VenueProvider</code>) and outbound restaurant map links.</li>
+          <li><a href="https://platform.openai.com/docs">OpenAI Responses API Documentation</a> — Structured JSON schema outputs, timeout management, and token bounds for <code>LlmRanker</code>.</li>
+          <li><a href="https://docs.github.com/en/actions">GitHub Actions, xUnit, &amp; Playwright Documentation</a> — Automated CI workflow runners (<code>.github/workflows/ci.yml</code>), .NET unit testing, and cross-browser E2E testing.</li>
         </ul>
       </article>
       <p class="footer">Table Sync · Food Planning</p>
