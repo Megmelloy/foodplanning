@@ -514,67 +514,133 @@
     UI--&gt;&gt;Organizer: Display final venue, Maps link &amp; .ics download</pre>
 
         <h2 id="6-data-model-detailed-design">6. Data Model (Detailed Design)</h2>
-        <p>The system separates durable relational user account storage in PostgreSQL from ephemeral, versioned lobby state in <code>IMemoryCache</code> / Redis. Passwords are never stored; authentication relies exclusively on external OAuth provider subjects.</p>
-        <pre class="mermaid">erDiagram
-    USER_ACCOUNT ||--o{ SAVED_TASTE_PROFILE : stores
-    USER_ACCOUNT ||--o{ LOBBY_MEMBER : optional_link
-    LOBBY ||--|{ LOBBY_MEMBER : contains
-    LOBBY ||--o{ LOBBY_INVITE : issues
-    LOBBY ||--o{ RANKED_VENUE : recommends
-    LOBBY_MEMBER ||--o| TASTE_PROFILE_SNAPSHOT : submits
+        <p>Table Sync uses a persistent relational database to store user accounts, dining sessions, invitations, participant preferences, and planning results. Session membership links users to the groups they are authorized to access. Saved information remains available across devices and after refreshing or reconnecting. The logical model does not depend on a particular database vendor or authentication provider.</p>
+        <p>The model separates account identity, session-specific preferences, and generated results. Relationships, uniqueness constraints, and transactional updates maintain consistency when multiple participants contribute to the same session.</p>
 
-    USER_ACCOUNT {
-      string id
-      string displayName
-      string email
-      string authProvider
-      string providerSubject
-      string createdAt
+        <h3 id="6-1-entities-and-relationships">6.1 Entities and Relationships</h3>
+        <pre class="mermaid">erDiagram
+    USER ||--o{ SESSION_MEMBER : participates
+    DINING_SESSION ||--|{ SESSION_MEMBER : contains
+    USER ||--o{ DINING_SESSION : organizes
+    DINING_SESSION ||--o{ INVITATION : issues
+    USER ||--o{ INVITATION : sends
+    SESSION_MEMBER ||--o{ CUISINE_PREFERENCE : records
+    CUISINE ||--o{ CUISINE_PREFERENCE : identifies
+    SESSION_MEMBER ||--o{ MEMBER_DIETARY_NEED : specifies
+    DIETARY_NEED ||--o{ MEMBER_DIETARY_NEED : identifies
+    DINING_SESSION ||--o{ PLANNING_RESULT : generates
+    PLANNING_RESULT ||--o{ RESULT_OPTION : contains
+    CUISINE ||--o{ RESULT_OPTION : identifies
+    USER {
+      uuid id PK
+      string identity_reference UK
+      string display_name
+      datetime created_at
+      datetime updated_at
     }
-    SAVED_TASTE_PROFILE {
-      string id
-      string accountId
-      string label
-      json profileJson
-      string updatedAt
-    }
-    LOBBY {
-      string id
+    DINING_SESSION {
+      uuid id PK
+      uuid organizer_user_id FK
+      string area
+      datetime scheduled_at
+      string time_zone
       string status
-      json searchArea
-      string dinnerTime
-      string finalVenueId
-      string lastActivityAt
-      number version
+      integer input_revision
+      uuid selected_option_id FK "nullable"
+      datetime created_at
+      datetime updated_at
     }
-    LOBBY_MEMBER {
-      string id
-      string displayName
-      string role
-      string tokenHash
-      string accountId
+    SESSION_MEMBER {
+      uuid id PK
+      uuid session_id FK
+      uuid user_id FK
+      string budget
+      string optional_notes
+      datetime joined_at
     }
-    LOBBY_INVITE {
-      string tokenHash
-      string expiresAt
-      boolean revoked
+    INVITATION {
+      uuid id PK
+      uuid session_id FK
+      uuid inviter_user_id FK
+      string recipient_reference
+      string token_hash UK
+      datetime expires_at
+      string status
+      uuid accepted_by_user_id FK "nullable"
     }
-    TASTE_PROFILE_SNAPSHOT {
-      number schemaVersion
-      json cuisineRatings
-      number maxPrice
-      json dietaryRestrictions
-      string notes
+    CUISINE {
+      uuid id PK
+      string name UK
     }
-    RANKED_VENUE {
-      string venueId
-      string name
-      number distanceMeters
-      number priceLevel
-      number score
-      string reason
-      string mapsUrl
+    CUISINE_PREFERENCE {
+      uuid member_id PK, FK
+      uuid cuisine_id PK, FK
+      string choice
+      datetime updated_at
+    }
+    DIETARY_NEED {
+      uuid id PK
+      string name UK
+    }
+    MEMBER_DIETARY_NEED {
+      uuid member_id PK, FK
+      uuid dietary_need_id PK, FK
+    }
+    PLANNING_RESULT {
+      uuid id PK
+      uuid session_id FK
+      integer input_revision
+      string generation_status
+      datetime created_at
+      datetime completed_at "nullable"
+    }
+    RESULT_OPTION {
+      uuid id PK
+      uuid result_id FK
+      uuid cuisine_id FK
+      integer rank
     }</pre>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Entity</th><th>Responsibility</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>User</td><td>Provides a stable application identity linked to the authentication mechanism. Authentication credentials are managed separately from dining-session data.</td></tr>
+              <tr><td>DiningSession</td><td>Stores the organizer, location, scheduled instant, IANA time-zone identifier, lifecycle status, input revision, and optional final selection.</td></tr>
+              <tr><td>SessionMember</td><td>Connects a user to a session and holds that outing's budget and notes. Organizer permissions derive from the session's organizer reference. Completion is derived from explicit cuisine answers rather than from whether any preferences happen to be present.</td></tr>
+              <tr><td>Invitation</td><td>Associates an invitation with a session and inviter, records its recipient or delivery reference, expiration and acceptance/revocation state, and stores a hash rather than a reusable plaintext invitation token.</td></tr>
+              <tr><td>CuisinePreference</td><td>Stores one member's Love, Open, or Skip response for one cuisine. No record means unanswered; an explicit Open response is not treated as missing data.</td></tr>
+              <tr><td>MemberDietaryNeed</td><td>Links a member to individual dietary selections. Cuisine and dietary reference tables avoid comma-separated lists and inconsistent labels.</td></tr>
+              <tr><td>PlanningResult</td><td>Records a planning attempt, its generation status, and the session input revision used. Multiple attempts may be retained under the data-retention policy. AI content must be validated before a result is marked completed.</td></tr>
+              <tr><td>ResultOption</td><td>Stores a ranked cuisine option belonging to a planning result. Detailed AI-generated content and supporting-information fields will be specified with the agreed AI integration contract rather than inferred from the existing recipe-generation payload.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="6-2-integrity-and-access-rules">6.2 Integrity and Access Rules</h3>
+        <ul>
+          <li>Primary and foreign keys enforce entity identity and valid relationships. Each user has at most one membership per session, enforced by a unique constraint on <code>(session_id, user_id)</code>.</li>
+          <li>Each session has one designated organizer who must also be a session member. Session creation and organizer reassignment preserve this invariant transactionally. The backend checks membership and role permissions on every protected operation.</li>
+          <li>The composite key <code>(member_id, cuisine_id)</code> permits one current answer per cuisine. The choice is required and constrained to Love, Open, or Skip. Dietary selections are unique per member and dietary need.</li>
+          <li>Budgets are constrained to <code>$</code>, <code>$$</code>, or <code>$$$</code>; notes are limited to 300 characters. Location and scheduling validation follow the planning rules. At least two completed members are required to generate a group result, and membership is limited to 15 people.</li>
+          <li>Invitation acceptance validates the token, recipient eligibility, expiration, revocation, and session capacity. Acceptance and membership creation are atomic and do not create duplicate members when retried.</li>
+          <li>Changes to planning inputs, including membership, preferences, budget, notes, location, or schedule, increment the session's input revision and invalidate its final selection. Updates use revision checks or equivalent transaction controls to prevent silently overwriting concurrent changes.</li>
+          <li>A planning result records the revision it used. A final selection must reference an option from a completed result belonging to the same session and matching its current input revision. Stale or failed results cannot be finalized. There is no separate voting entity or voting step.</li>
+        </ul>
+
+        <h3 id="6-3-derived-data-and-integration-contracts">6.3 Derived Data and Integration Contracts</h3>
+        <p>Group size, completion status, combined dietary needs, group budget, and cuisine preference counts are derived from membership and preference records. Any cached or stored summaries must remain consistent with those source records. Saved planning results retain their input revision so they can be distinguished from recommendations based on the current group state.</p>
+        <p>Persistent application entities are distinct from API request and response formats. The backend validates integration payloads and maps accepted information into the application data model. Recipe and grocery-list generation and dining recommendations have different output contracts; the AI component's responsibility and detailed result schema must be agreed before those payloads are mapped into stored results.</p>
+
+        <h3 id="6-4-data-lifecycle">6.4 Data Lifecycle</h3>
+        <ul>
+          <li>When a member leaves or is removed, their session-specific preferences and dietary selections are removed from active planning, the input revision advances, and prior results become stale. An organizer must transfer ownership or delete the session before leaving.</li>
+          <li>Expired or revoked invitations cannot be accepted. Accepted invitations record their accepting account and cannot be reused to create additional memberships.</li>
+          <li>Account deletion resolves ownership of organized sessions and removes or anonymizes related identity and planning data according to the agreed retention policy. Retained historical results must not expose deleted members' personal information.</li>
+          <li>Session deletion removes its memberships, preferences, invitations, results, and final selection in a consistent operation, subject to any explicitly approved retention obligations.</li>
+          <li>Retention periods, historical-result content, and deletion handling for backups and external providers must be agreed before production release; no indefinite retention is assumed.</li>
+        </ul>
 
         <h2 id="7-user-interface-design-detailed-design">7. User Interface Design (Detailed Design)</h2>
         <p>The interface adapts dynamically based on the participant's role in the lobby session:</p>
